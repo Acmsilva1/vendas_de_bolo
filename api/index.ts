@@ -22,10 +22,10 @@ import {
   isLoginBlocked,
   registerLoginFailure,
   clearLoginFailures
-} from './_db';
-import { OrderStatus } from './_types';
-import { parseImageDataUrl } from './_image';
-import { createSessionToken, readCookie, verifySessionToken } from './_auth';
+} from './_db.js';
+import { OrderStatus } from './_types.js';
+import { parseImageDataUrl } from './_image.js';
+import { createSessionToken, readCookie, verifySessionToken } from './_auth.js';
 
 export const apiRouter = Router();
 

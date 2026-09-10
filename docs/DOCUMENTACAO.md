@@ -206,3 +206,14 @@ Checkpoint: adaptação Vercel/Supabase e migration master em 2026-09-10; hash o
 - [x] TypeScript e build Vercel validados após a recuperação
 
 Checkpoint: recuperação dos arquivos ausentes para novo commit e deploy em 2026-09-10; base Git `c63a353`.
+
+---
+
+## 9. Correção do Runtime Serverless ESM
+
+- [x] Runtime Logs da Vercel consultados por sessão autenticada
+- [x] Falha `ERR_MODULE_NOT_FOUND` identificada antes da conexão com o banco
+- [x] Imports relativos do backend ajustados para extensões `.js` compatíveis com o runtime ESM
+- [x] Sete testes unitários, TypeScript e build Vercel aprovados após a correção
+
+Checkpoint: correção dos imports ESM da função Vercel em 2026-09-10; base Git `9a43000`.

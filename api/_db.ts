@@ -1,6 +1,6 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { Pool, PoolClient } from 'pg';
-import { AppStats, Cake, Order, OrderItem } from './_types';
+import { AppStats, Cake, Order, OrderItem } from './_types.js';
 
 let pgPool: Pool | null = null;
 let usePostgres = false;

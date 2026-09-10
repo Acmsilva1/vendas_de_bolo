@@ -2,8 +2,8 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { apiRouter } from './api/index';
-import { initDatabase } from './api/_db';
+import { apiRouter } from './api/index.js';
+import { initDatabase } from './api/_db.js';
 
 dotenv.config();
 dotenv.config({ path: 'local_db.env', override: false });
