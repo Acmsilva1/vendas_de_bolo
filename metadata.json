@@ -1,0 +1,6 @@
+{
+  "name": "Delícias da Jú - Bolos Caseiros",
+  "description": "Catálogo de bolos caseiros comuns e com cobertura para entrega no condomínio.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

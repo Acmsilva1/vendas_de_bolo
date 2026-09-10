@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+local_db.env
+token_telegram_vendas.env
+.mensageria
+.vscode
+.idea
+coverage
+docs
+migrations
+tests
+AGENTS.md
+*.log
+bun.lock
