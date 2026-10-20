@@ -1,7 +1,10 @@
+-- Executar no SQL Editor como postgres, em um projeto novo.
+-- Cria o schema final sem apagar dados. Nao executar 001..008 depois desta master.
+-- Cadastrar o admin com hash scrypt via SQL privado ou ADMIN_INITIAL_USER/PASSWORD.
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS vendas_de_bolo;
-SET search_path TO vendas_de_bolo, public;
+SET LOCAL search_path TO vendas_de_bolo, pg_catalog;
 
 CREATE TABLE IF NOT EXISTS usuarios (
   id SERIAL PRIMARY KEY,
@@ -15,7 +18,6 @@ CREATE TABLE IF NOT EXISTS usuarios (
 CREATE TABLE IF NOT EXISTS bolos (
   id SERIAL PRIMARY KEY,
   nome VARCHAR(150) NOT NULL,
-  descricao TEXT NOT NULL DEFAULT '',
   ingredientes TEXT[] NOT NULL DEFAULT '{}',
   categoria VARCHAR(50) NOT NULL DEFAULT 'comum',
   preco NUMERIC(10, 2) NOT NULL CHECK (preco >= 0),
@@ -80,7 +82,7 @@ ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(20) NOT NUL
 
 ALTER TABLE bolos DROP CONSTRAINT IF EXISTS bolos_categoria_check;
 ALTER TABLE bolos ADD CONSTRAINT bolos_categoria_check
-  CHECK (categoria IN ('comum', 'com_cobertura'));
+  CHECK (categoria IN ('comum', 'com_cobertura', 'sobremesas'));
 
 ALTER TABLE bolos DROP CONSTRAINT IF EXISTS bolos_imagem_tipo_check;
 ALTER TABLE bolos ADD CONSTRAINT bolos_imagem_tipo_check
@@ -99,6 +101,10 @@ CREATE INDEX IF NOT EXISTS idx_logs_criado_em ON logs(criado_em DESC);
 CREATE INDEX IF NOT EXISTS idx_logs_pedido ON logs(pedido_id);
 CREATE INDEX IF NOT EXISTS idx_tentativas_login_atualizado_em ON tentativas_login(atualizado_em);
 
+-- Uma unica linha, independentemente de nome ou status do administrador.
+-- Se ja houver varios usuarios, aborta toda a transacao sem excluir nenhum.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_admin_unico ON usuarios ((TRUE));
+
 ALTER TABLE usuarios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE bolos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE pedidos ENABLE ROW LEVEL SECURITY;
@@ -107,7 +113,24 @@ ALTER TABLE logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tentativas_login ENABLE ROW LEVEL SECURITY;
 
 DO $$
+DECLARE
+  tabela TEXT;
 BEGIN
+  REVOKE ALL ON SCHEMA vendas_de_bolo FROM PUBLIC;
+  REVOKE ALL ON ALL TABLES IN SCHEMA vendas_de_bolo FROM PUBLIC;
+  REVOKE ALL ON ALL SEQUENCES IN SCHEMA vendas_de_bolo FROM PUBLIC;
+
+  FOREACH tabela IN ARRAY ARRAY['usuarios', 'bolos', 'pedidos', 'itens_pedido', 'logs', 'tentativas_login']
+  LOOP
+    -- Restritiva: outra policy permissiva nao libera acesso direto por acidente.
+    -- O backend conecta como postgres; a sessao do painel e validada na API.
+    EXECUTE format('DROP POLICY IF EXISTS bloquear_acesso_direto ON vendas_de_bolo.%I', tabela);
+    EXECUTE format(
+      'CREATE POLICY bloquear_acesso_direto ON vendas_de_bolo.%I AS RESTRICTIVE FOR ALL TO PUBLIC USING (false) WITH CHECK (false)',
+      tabela
+    );
+  END LOOP;
+
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     REVOKE ALL ON SCHEMA vendas_de_bolo FROM anon;
     REVOKE ALL ON ALL TABLES IN SCHEMA vendas_de_bolo FROM anon;

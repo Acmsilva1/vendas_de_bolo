@@ -217,3 +217,98 @@ Checkpoint: recuperação dos arquivos ausentes para novo commit e deploy em 202
 - [x] Sete testes unitários, TypeScript e build Vercel aprovados após a correção
 
 Checkpoint: correção dos imports ESM da função Vercel em 2026-09-10; base Git `9a43000`.
+
+---
+
+## 10. Master Supabase e Administrador Único
+
+- [x] `migrations/000_master_supabase.sql` consolida as seis tabelas finais, relacionamentos, índices e validações, sem apagar registros.
+- [x] Tabela `usuarios` limitada a uma única linha por índice único de expressão constante, também aplicado na inicialização do backend.
+- [x] Bootstrap do administrador tolera a existência do único usuário sem substituir sua senha ou criar outro ao mudar as variáveis iniciais.
+- [x] RLS habilitada nas seis tabelas, com policies restritivas de negação de acesso direto e revogação de privilégios de `PUBLIC`, `anon` e `authenticated`.
+- [x] README documenta execução isolada da master, criação do primeiro admin e variáveis exatas da Vercel.
+- [ ] Executar a master e validar privilégios/RLS com papéis reais em banco autorizado; nenhuma conexão de integração foi realizada nesta tarefa.
+
+A autenticação permanece própria da API: cookie assinado com `ADMIN_SESSION_SECRET`, credencial scrypt em `usuarios` e rotas administrativas protegidas no backend. Não usa Supabase Auth. A conexão privilegiada PostgreSQL ignora RLS; as policies não representam a sessão administrativa da aplicação. `ANON_KEY_SUPABASE` e `SERVICE_ROLE_SUPABASE` não são usadas pelo código atual.
+
+Em projeto novo, executar somente a master no SQL Editor como `postgres`, sem rodar as migrations históricas em sequência depois. A master não converte qualquer schema legado e aborta se houver vários usuários, sem excluir dados automaticamente. O admin é criado no primeiro início do backend com `ADMIN_INITIAL_USER` e `ADMIN_INITIAL_PASSWORD`; remover essas variáveis após confirmar o login. A conexão da Vercel usa `URL_SUPABASE` com URI PostgreSQL do Pooler e `PGSCHEMA=vendas_de_bolo`. O chat de notificações usa exatamente `TELEGRAM_CHAT_ID`.
+
+Validação local: sete testes unitários aprovados, TypeScript (`npm run lint`) e build Vercel aprovados; Gitleaks no histórico sem achados, e `git diff --check` sem erros. Testes e build exigiram execução fora da restrição de subprocessos após `spawn EPERM`. A migration foi revisada estaticamente; seu SQL, a unicidade e as policies ainda não foram executados/validados em PostgreSQL.
+
+Checkpoint: 2026-10-19; base Git `00de1e6`; alterações locais sem commit, push ou execução no Supabase. André confirmou login tradicional em `usuarios`, com um único administrador e nenhum cadastro de outros usuários. Solicitou cadastro direto no banco: preparado `migrations/009_admin_inicial.local.sql`, ignorado pelo Git, com hash scrypt verificado localmente para senha correta e incorreta. Nenhuma senha em texto puro no SQL ou documentação. Após erro 23505 reportado por André no índice `idx_usuarios_admin_unico`, o script foi ajustado para `ON CONFLICT ((TRUE)) DO UPDATE`: cria se vazio ou atualiza o único admin, preservando o ID, substituindo login/hash e reativando a conta. Hash conferido localmente; execução do SQL corrigido em banco ainda não realizada pelo agente. Destino confirmado: Supabase `tndtlnmgofpzwuakvxdt`. Configuração encontrada aponta apenas para localhost; painel do projeto redirecionou ao login, sem sessão autenticada. Usuário executou a versão inicial e reportou conflito de unicidade; a versão corrigida está pronta para execução no SQL Editor. Nenhuma escrita em banco foi realizada pelo agente. Cadastro SQL dispensa as duas variáveis de bootstrap, mantendo o segredo de sessão.
+
+
+---
+
+## 11. Ambiente local PostgreSQL 17
+
+- Instância existente PostgreSQL 17.2, loopback 127.0.0.1:5432, banco db; nenhum serviço compartilhado foi alterado.
+- Master aplicada no schema vendas_de_bolo com as seis tabelas, RLS e índice de administrador único. Seed privado aplicado ao admin local.
+- Reaplicação da master e seed validada pelo comando db:setup, preservando o único administrador.
+- Teste SQL de segundo administrador bloqueado pelo índice; papel temporário com grants não conseguiu ler o admin nem inserir devido à RLS. Transações de teste revertidas, sem manter o papel temporário.
+- API local respondeu com PostgreSQL ativo; login, cookie e consulta administrativa autenticada passaram. Consulta sem sessão retornou 401. Nenhuma notificação Telegram foi enviada.
+- local_db.env preserva credenciais existentes e recebe segredo local de sessão e bind em loopback. Tokens Telegram vazios neste ambiente evitam notificações reais.
+- scripts/local-db.mjs fornece db:status, db:setup e db:sql, limitados a PostgreSQL 17 local. db:setup reaplica o seed privado se presente; db:sql executa o arquivo informado e imprime resultados.
+- .local/, módulos, builds, logs, configurações e SQL com credencial estão ignorados. Manifesto, lockfile, scripts e migrations de schema podem ser versionados.
+- Auditoria do lockfile NPM sem vulnerabilidades conhecidas antes da instalação. Instalação recuperada pelo cache: lucide-react extraído com tar nativo após conferir SHA-512 e versão; npm rebuild sem scripts concluiu os comandos locais e npm ls --depth=0 não apontou dependências ausentes. Lockfile e versões preservados.
+- Sete testes unitários, TypeScript e build Vercel aprovados. Após reiniciar o app, health confirmou PostgreSQL ativo e o Vite serviu main.tsx, AdminDashboard.tsx e CSS com HTTP 200, sem erros no log. Login, sessão e proteção de pedidos conferidos pela API.
+- Navegador integrado não anexou a aba local, portanto a inspeção visual não foi concluída.
+
+Checkpoint: 2026-10-19; base Git 00de1e6; app em http://127.0.0.1:5188, processo em segundo plano registrado em .local/app.pid e logs em .local/app.out.log e .local/app.err.log. Banco, API, módulos e build locais verificados; navegador visual indisponível. Manter o terminal do PostgreSQL existente aberto. Nenhuma alteração executada no Supabase, nenhum commit, push ou deploy.
+
+
+---
+
+## 12. Catálogo com prioridade mobile
+
+- Estado vazio agora usa todas as colunas em qualquer breakpoint; ícone vetorial e texto centralizado substituem a composição de emojis que ficava estreita no celular.
+- Banner com texto mais curto, hierarquia e contraste revisados; filtros em duas áreas iguais no celular.
+- Cards em uma coluna abaixo de 360 px, duas até tablet, três a partir de 768 px e quatro em telas grandes. Imagens maiores, bordas suaves e controles de toque de 44 px.
+- Quantidade e botão de adicionar ficam em linhas separadas para caber nas larguras intermediárias. Barra do pedido compacta no mobile, com acesso Ver pedido e respeito à área segura.
+- Navegador validado em 320, 360, 390, 430, 768 e 1280 px: sem rolagem horizontal; estado vazio ocupa a largura integral da grade. Cards verificados com nome longo, estoque baixo e esgotado, sem overflow interno.
+- Ingredientes, quantidade, categoria e adição ao pedido conferidos com fixture isolada em .local; nenhum produto fictício foi gravado no PostgreSQL. Esse teste não realizou checkout nem integração de pedido.
+- TypeScript e build Vercel aprovados. Captura do catálogo real em .local/catalog-mobile-390.png; arquivos de QA continuam ignorados pelo Git.
+
+Checkpoint: 2026-10-19; base Git 00de1e6; ajustes apenas em web/components/CakeCatalog.tsx, src/index.css e documentação nesta etapa. Servidor local com HMR ativo; sem commit, push ou deploy.
+
+
+### Ajuste de densidade mobile
+
+Em 2026-10-19, por solicitação de André, os controles do catálogo foram compactados: filtros e botões principais de 36 px; quantidade e ingredientes de 32 px; imagens de 96 px e menores espaçamentos no banner, cards, navegação e estado vazio. Desktop mantém suas regras de breakpoint. Verificação em navegador de 320, 360, 390, 430 e 768 px sem overflow horizontal; card real com 258–280 px nas larguras de celular. TypeScript aprovado. Sem alteração de regras de negócio ou dados. Checkpoint: base Git 00de1e6, alterações locais sem commit/deploy.
+
+
+### Estoque e CRUD proporcionais no mobile
+
+Em 2026-10-19, lista de estoque reorganizada em duas linhas por item: miniatura/nome e preço acima, quantidade e ações abaixo. Categoria fica no cabeçalho de grupo e descrição permanece no desktop. Botões de 32 px, resumos curtos e campos sem overflow. Item real com 98 px; fixture de seis bolos com nomes longos apresentou 98–99 px por linha em 320, 390 e 430 px, sem gravação desses produtos no banco.
+
+Formulário de cadastro/edição com cabeçalho separado, conteúdo com scroll interno, categoria inteira, preço/estoque em colunas iguais e ações do mesmo tamanho. Dialog e botão de fechar identificados. Testado de 320×568 a 768×900: preço/estoque com largura, altura e alinhamento iguais, botões simétricos e visíveis, sem overflow horizontal. Inputs de 40 px no mobile preservam fonte de 16 px.
+
+TypeScript e build Vercel aprovados. Validação visual e de geometria; não foram enviados formulários de criação/edição, alteração de estoque nem exclusão. Checkpoint: base Git 00de1e6, ajustes em AdminDashboard.tsx e index.css; sem commit, push ou deploy.
+
+
+### Cobertura avulsa e Sobremesas
+
+Em 2026-10-19, categorias centralizadas em shared/categories.ts para catálogo, tipos, formulário e validação da API: Comum, Cobertura (potinho avulso) e Sobremesas (doces). Identificador legado com_cobertura preservado; nova categoria sobremesas. Cabeçalhos do estoque incluem as três categorias e o formulário passa a cadastrar itens, com orientação sobre potinhos e doces. Textos de carrinho/reserva deixam de contar apenas bolos.
+
+Master e schema inicial em runtime atualizados. Migration incremental 010_categorias_sobremesas.sql aplicada somente no PostgreSQL local; aceita sobremesas sem apagar ou converter itens existentes. Inserção SQL de validação revertida, sem manter produto fictício. Para Supabase existente, executar a migration 010 antes do deploy; não foi acessado nem alterado nesta etapa.
+
+Validações: nove testes unitários aprovados, TypeScript e build Vercel aprovados; navegador confirmou as três opções no cadastro, dicas correspondentes e filtros sem cortes entre 320 e 430 px. Fixture isolada confirmou a filtragem de sobremesa. Nenhum formulário real de cadastro foi enviado nesta validação. Checkpoint: base Git 00de1e6; mudanças locais sem commit, push ou deploy.
+
+
+### Filtros individuais e contagem de cards
+
+Em 2026-10-19, categorias do catálogo passaram a botões arredondados individuais, sem contêiner segmentado. Cada nome mostra a contagem de registros/cards da respectiva categoria, usando a mesma lista que alimenta a grade; não soma unidades em estoque e inclui cards esgotados que continuam publicados. Fixture com três cards comuns e dez unidades somadas exibiu Comum (3); botões couberam em uma linha a 320 px sem overflow. Checkpoint: base Git 00de1e6; mudança em CakeCatalog.tsx e documentação, sem alteração de dados.
+
+
+### Remoção da descrição do formulário e da tabela
+
+Em 2026-10-19, removidos campo/estado de descrição do formulário administrativo, envio de description no payload e texto descritivo da tabela de estoque. Nome e ingredientes permanecem; categoria, preço, quantidade e foto seguem disponíveis. Coluna e contrato da API preservados, sem apagar descrições existentes: atualização sem description mantém o valor armazenado. Navegador confirmou ausência de textarea no formulário e de descrição na tabela. TypeScript aprovado; ajuste apenas de interface, sem envio de formulários ou alteração de dados. Checkpoint: base Git 00de1e6; sem commit/deploy.
+
+
+### Remoção definitiva da coluna de descrição dos itens
+
+Em 2026-10-19, por autorização explícita de André, removida a coluna vendas_de_bolo.bolos.descricao no PostgreSQL local. Backup privado prévio em .local/backups/bolos-descricao-1792458394082.json (ignorado pelo Git). Três itens preservados, com nomes, ingredientes, categorias, preços e quantidades comparados antes/depois. logs.descricao e o campo description de respostas da API Telegram foram preservados por terem funções independentes.
+
+Migration incremental 011_remover_descricao_itens.sql criada, sem CASCADE. Master e schema do runtime para projetos novos não recriam a coluna. Tipos, projeções, INSERT/UPDATE e rotas de itens deixam de usar description; removida também sua exibição no catálogo desktop. Backend local reiniciado.
+
+Validação: nove testes unitários, TypeScript e build Vercel aprovados. Criação, edição e leitura pelas funções reais do repositório SQL passaram dentro de transação revertida, verificando posição dos parâmetros, preço, categoria, quantidade e ingredientes. API pública retornou 200 com três itens e sem description; health indicou PostgreSQL ativo. Supabase não alterado: publicar o código atualizado antes de executar a migration 011 para não quebrar o backend antigo. Checkpoint: base Git 00de1e6; sem commit, push ou deploy.

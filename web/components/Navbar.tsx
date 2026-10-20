@@ -31,7 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-violet-100 text-slate-900 shadow-sm">
       <div className="max-w-7xl mx-auto px-2 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16 sm:h-18 gap-2">
+        <div className="flex items-center justify-between h-14 sm:h-18 gap-2">
           {/* Logo & Marca Delícias da Jú */}
           <button type="button" className="flex min-w-0 items-center space-x-2 sm:space-x-3 cursor-pointer text-left" onClick={() => onViewChange('catalog')} aria-label="Ir para o cardápio">
             <div className="mobile-brand-icon w-10 h-10 sm:w-11 sm:h-11 flex-shrink-0 rounded-xl bg-pink-500/20 border border-pink-400/40 flex items-center justify-center text-pink-600 shadow-inner">
@@ -47,7 +47,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </span>
               </div>
               <p className="hidden sm:block text-xs text-slate-600 font-sans">
-                Bolos Caseiros • Comuns e com Cobertura
+                Bolos caseiros • Coberturas • Sobremesas
               </p>
             </div>
           </button>
@@ -67,7 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={() => onViewChange('catalog')}
                 aria-current={currentView === 'catalog' ? 'page' : undefined}
                 aria-label="Cardápio"
-                className={`min-h-11 min-w-11 justify-center px-2 sm:min-h-0 sm:min-w-0 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center sm:space-x-1.5 ${
+                className={`min-h-9 min-w-9 justify-center px-2 sm:min-h-0 sm:min-w-0 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center sm:space-x-1.5 ${
                   currentView === 'catalog'
                     ? 'bg-pink-600 text-white shadow-md'
                     : 'text-slate-700 hover:text-slate-900 hover:bg-violet-100/60'
@@ -83,7 +83,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 onClick={() => onViewChange('admin')}
                 aria-current={currentView === 'admin' ? 'page' : undefined}
                 aria-label="Painel administrativo"
-                className={`min-h-11 min-w-11 justify-center px-2 sm:min-h-0 sm:min-w-0 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center sm:space-x-1.5 ${
+                className={`min-h-9 min-w-9 justify-center px-2 sm:min-h-0 sm:min-w-0 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg transition-all flex items-center sm:space-x-1.5 ${
                   currentView === 'admin'
                     ? 'bg-pink-600 text-white shadow-md'
                     : 'text-slate-700 hover:text-slate-900 hover:bg-violet-100/60'
@@ -101,7 +101,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                 id="btn-nav-cart"
                 onClick={onOpenCart}
                 aria-label={cartCount > 0 ? `Abrir carrinho com ${cartCount} itens` : 'Abrir carrinho'}
-                className="relative min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 justify-center p-2.5 rounded-xl bg-pink-500/15 border border-pink-400/30 text-pink-700 hover:bg-pink-500/25 transition-colors flex items-center space-x-2"
+                className="relative min-h-9 min-w-9 sm:min-h-0 sm:min-w-0 justify-center p-2 sm:p-2.5 rounded-xl bg-pink-500/15 border border-pink-400/30 text-pink-700 hover:bg-pink-500/25 transition-colors flex items-center space-x-2"
               >
                 <ShoppingCart className="w-5 h-5" />
                 <span className="hidden md:inline text-xs font-semibold">Carrinho</span>

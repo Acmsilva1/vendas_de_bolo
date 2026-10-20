@@ -1,9 +1,10 @@
+import type { ItemCategory } from '../shared/categories.js';
+
 export interface Cake {
   id: number;
   name: string;
-  description: string;
   ingredients: string[];
-  category: 'comum' | 'com_cobertura';
+  category: ItemCategory;
   price: number;
   stock_quantity: number;
   image_url: string;

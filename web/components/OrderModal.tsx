@@ -132,7 +132,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   const emptyCartTips = [
     'Que tal experimentar o Bolo de Fubá? É simples, caseiro e combina com qualquer café.',
     'O Bolo de Laranja é uma escolha leve e perfumada para adoçar o dia.',
-    'Se quiser algo mais especial, experimente um dos bolos com cobertura.',
+    'Complete seu pedido com uma cobertura avulsa ou uma sobremesa.',
     'Comece pelo seu sabor favorito e monte seu pedido do jeitinho que quiser.'
   ];
   const emptyCartTip = emptyCartTips[Math.floor(Date.now() / 60000) % emptyCartTips.length];
@@ -227,7 +227,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
       'BT',
       '/F1 24 Tf',
       '50 735 Td',
-      `(${escapePdfText('Sua reserva de bolos')}) Tj`,
+      `(${escapePdfText('Sua reserva de itens')}) Tj`,
       '/F1 12 Tf',
       '0 -28 Td',
       '0.28 0.33 0.41 rg',

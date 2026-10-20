@@ -1,3 +1,4 @@
+import { ITEM_CATEGORIES, ITEM_CATEGORY_LABELS } from '../../shared/categories';
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cake, Order, AppStats } from '../types';
@@ -57,9 +58,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [isCakeModalOpen, setIsCakeModalOpen] = useState(false);
   const [editingCake, setEditingCake] = useState<Cake | null>(null);
   const [formName, setFormName] = useState('');
-  const [formDescription, setFormDescription] = useState('');
   const [formIngredients, setFormIngredients] = useState('');
-  const [formCategory, setFormCategory] = useState<'comum' | 'com_cobertura'>('comum');
+  const [formCategory, setFormCategory] = useState<Cake['category']>('comum');
   const [formPrice, setFormPrice] = useState('');
   const [formStock, setFormStock] = useState('');
   const [formImageDataUrl, setFormImageDataUrl] = useState('');
@@ -239,7 +239,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
     const payload = {
       name: formName.trim(),
-      description: formDescription.trim(),
       ingredients: formIngredients.split(',').map(item => item.trim()).filter(Boolean),
       category: formCategory,
       price: parseFloat(formPrice),
@@ -308,7 +307,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const openNewCakeModal = () => {
     setEditingCake(null);
     setFormName('');
-    setFormDescription('');
     setFormIngredients('');
     setFormCategory('comum');
     setFormPrice('');
@@ -321,7 +319,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const openEditCakeModal = (cake: Cake) => {
     setEditingCake(cake);
     setFormName(cake.name);
-    setFormDescription(cake.description);
     setFormIngredients(cake.ingredients.join(', '));
     setFormCategory(cake.category);
     setFormPrice(cake.price.toString());
@@ -357,7 +354,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
             className="min-h-11 sm:min-h-0 flex-1 sm:flex-none py-2.5 px-4 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-sm sm:text-xs font-semibold transition-all flex items-center justify-center space-x-2 shadow-md cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Novo Bolo</span>
+            <span>Novo item</span>
           </button>
 
           <button
@@ -581,24 +578,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-800">
-                {(['comum', 'com_cobertura'] as const).map(category => (
+                {ITEM_CATEGORIES.map(({ id: category }) => (
                   <React.Fragment key={category}>
                     <tr className="bg-violet-50/70">
                       <th colSpan={5} className="px-4 py-2.5 text-left text-xs font-bold uppercase tracking-wider text-violet-800">
                         {(() => {
                           const categoryCakes = cakes.filter(cake => cake.category === category);
                           const categoryStock = categoryCakes.reduce((total, cake) => total + cake.stock_quantity, 0);
-                          const categoryLabel = category === 'com_cobertura' ? 'Com cobertura' : 'Comum';
+                          const categoryLabel = ITEM_CATEGORY_LABELS[category];
                           return (
                             <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
                               <span className="font-extrabold text-violet-900">{categoryLabel}</span>
                               <span className="font-extrabold text-pink-700">
-                                <span className="text-[10px] uppercase tracking-wider text-pink-500">sabores:</span>{' '}
+                                <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-pink-500">sabores:</span>{' '}
                                 {categoryCakes.length}
+                                <span className="sm:hidden"> {categoryCakes.length === 1 ? 'sabor' : 'sabores'}</span>
                               </span>
                               <span className="font-extrabold text-emerald-700">
-                                <span className="text-[10px] uppercase tracking-wider text-emerald-500">total de itens:</span>{' '}
+                                <span className="hidden sm:inline text-[10px] uppercase tracking-wider text-emerald-500">total de itens:</span>{' '}
                                 {categoryStock}
+                                <span className="sm:hidden"> un.</span>
                               </span>
                             </span>
                           );
@@ -614,7 +613,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <tr key={cake.id} className="hover:bg-violet-50/40 transition-colors">
                       {/* Nome e Miniatura */}
                       <td className="py-3 px-4" data-label="Bolo">
-                        <div className="flex items-center space-x-3">
+                        <div className="stock-item-identity flex items-center gap-3">
                           <img
                             src={cake.image_url || '/assets/cake-card.svg'}
                             alt={cake.name}
@@ -624,10 +623,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                             decoding="async"
                           />
                           <div>
-                            <div className="font-semibold text-slate-900">{cake.name}</div>
-                            <div className="text-[11px] text-slate-600 max-w-xs truncate">
-                              {cake.description}
-                            </div>
+                            <div className="stock-item-name font-semibold text-slate-900">{cake.name}</div>
                           </div>
                         </div>
                       </td>
@@ -635,7 +631,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       {/* Categoria */}
                       <td className="py-3 px-4" data-label="Categoria">
                         <span className="capitalize px-2 py-0.5 rounded-full text-[11px] bg-violet-50 border border-violet-200 text-slate-700">
-                          {cake.category === 'com_cobertura' ? 'Com cobertura' : 'Comum'}
+                          {ITEM_CATEGORY_LABELS[cake.category]}
                         </span>
                       </td>
 
@@ -944,42 +940,35 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
-              className="h-[100dvh] w-full overflow-y-auto bg-white p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] text-slate-900 sm:h-auto sm:max-w-md sm:overflow-visible sm:border sm:border-violet-100 sm:rounded-2xl sm:p-6 sm:shadow-2xl sm:my-6"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="cake-editor-title"
+              className="cake-editor flex h-[100dvh] w-full flex-col overflow-hidden bg-white text-slate-900 sm:h-auto sm:max-h-[calc(100dvh-2rem)] sm:max-w-lg sm:border sm:border-violet-100 sm:rounded-2xl sm:shadow-2xl"
             >
-              <div className="flex items-center justify-between pb-3 border-b border-violet-100 mb-4">
-                <h3 className="text-lg font-serif font-bold text-pink-800">
-                  {editingCake ? 'Editar Bolo' : 'Cadastrar Novo Bolo'}
+              <div className="flex shrink-0 items-center justify-between gap-3 border-b border-violet-100 px-4 py-3">
+                <h3 id="cake-editor-title" className="text-lg font-serif font-bold text-pink-800">
+                  {editingCake ? 'Editar item' : 'Cadastrar novo item'}
                 </h3>
                 <button
                   type="button"
+                  aria-label="Fechar formulário de item"
                   onClick={() => setIsCakeModalOpen(false)}
-                  className="text-slate-600 hover:text-slate-900"
+                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-600 hover:bg-violet-50 hover:text-slate-900"
                 >
                   <XCircle className="w-5 h-5" />
                 </button>
               </div>
 
-              <form onSubmit={handleSaveCake} className="space-y-3.5">
+              <form onSubmit={handleSaveCake} className="cake-editor-form min-h-0 overflow-y-auto space-y-3 p-4">
                 <div>
-                  <label className="block text-xs text-slate-700 mb-1">Nome do Bolo *</label>
+                  <label className="block text-xs text-slate-700 mb-1">Nome do item *</label>
                   <input
                     type="text"
                     required
                     value={formName}
                     onChange={e => setFormName(e.target.value)}
-                    placeholder="Ex: Bolo de Cenoura com Brigadeiro"
+                    placeholder="Ex: Bolo de cenoura, ganache ou pudim"
                     className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-700 mb-1">Descrição</label>
-                  <textarea
-                    rows={2}
-                    value={formDescription}
-                    onChange={e => setFormDescription(e.target.value)}
-                    placeholder="Ingredientes, textura, calda..."
-                    className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400 resize-none"
                   />
                 </div>
 
@@ -996,16 +985,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
+                  <div className="col-span-2">
                     <label className="block text-xs text-slate-700 mb-1">Categoria</label>
                     <select
                       value={formCategory}
-                      onChange={e => setFormCategory(e.target.value as 'comum' | 'com_cobertura')}
+                      onChange={e => setFormCategory(e.target.value as Cake['category'])}
                       className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400"
                     >
-                      <option value="comum">Comum</option>
-                      <option value="com_cobertura">Com cobertura</option>
+                      {ITEM_CATEGORIES.map(category => <option key={category.id} value={category.id}>{category.label}</option>)}
                     </select>
+                    {formCategory !== 'comum' && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {formCategory === 'com_cobertura' ? 'Cobertura avulsa, vendida em potinho.' : 'Doces e sobremesas vendidos separadamente.'}
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -1021,26 +1014,23 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                       className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400"
                     />
                   </div>
+                  <div>
+                    <label className="block text-xs text-slate-700 mb-1">Estoque (un.) *</label>
+                    <input
+                      type="number"
+                      min="0"
+                      required
+                      value={formStock}
+                      onChange={e => setFormStock(e.target.value)}
+                      placeholder="5"
+                      className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400"
+                    />
+                  </div>
                 </div>
 
                 <div>
                   <label className="block text-xs text-slate-700 mb-1">
-                    Quantidade do estoque *
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formStock}
-                    onChange={e => setFormStock(e.target.value)}
-                    placeholder="5"
-                    className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-xs focus:outline-none focus:border-pink-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs text-slate-700 mb-1">
-                    Foto do bolo {editingCake ? '(opcional para manter a atual)' : '*'}
+                    Foto do item {editingCake ? '(opcional para manter a atual)' : '*'}
                   </label>
                   <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-pink-300 bg-pink-50/70 p-3 transition-colors hover:bg-pink-100/70">
                     <ImagePlus className="h-6 w-6 flex-shrink-0 text-pink-600" />
@@ -1060,7 +1050,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     <img
                       src={formImageDataUrl || editingCake?.image_url || '/assets/cake-card.svg'}
                       alt="Prévia do bolo"
-                      className="mt-2 h-28 w-full rounded-xl border border-violet-200 object-cover"
+                      className="mt-2 h-20 w-full rounded-xl border border-violet-200 object-cover"
                     />
                   )}
                 </div>
@@ -1071,7 +1061,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   </p>
                 )}
 
-                <div className="pt-2 flex justify-end space-x-2">
+                <div className="cake-editor-actions sticky bottom-0 grid grid-cols-2 gap-2 border-t border-violet-100 bg-white py-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]">
                   <button
                     type="button"
                     onClick={() => setIsCakeModalOpen(false)}
@@ -1084,7 +1074,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     disabled={isSavingCake}
                     className="px-4 py-2 rounded-xl bg-pink-600 hover:bg-pink-500 disabled:cursor-wait disabled:opacity-60 text-white text-xs font-semibold shadow-md"
                   >
-                    {isSavingCake ? 'Salvando...' : 'Salvar Bolo'}
+                    {isSavingCake ? 'Salvando...' : 'Salvar item'}
                   </button>
                 </div>
               </form>

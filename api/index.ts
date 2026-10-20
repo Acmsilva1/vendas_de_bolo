@@ -1,3 +1,4 @@
+import { isItemCategory } from '../shared/categories.js';
 import { createHmac, randomBytes } from 'crypto';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import {
@@ -249,7 +250,7 @@ apiRouter.get('/cakes/:id', async (req: Request, res: Response) => {
 // Criar novo bolo (Admin)
 apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const { name, description, ingredients, category, price, stock_quantity, image_data_url } = req.body;
+    const { name, ingredients, category, price, stock_quantity, image_data_url } = req.body;
 
     const sanitizedName = sanitize(name, 100);
     if (!sanitizedName) {
@@ -271,11 +272,10 @@ apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
       return;
     }
 
-    const validCategory = ['comum', 'com_cobertura'].includes(category) ? category : 'comum';
+    const validCategory = isItemCategory(category) ? category : 'comum';
 
     const newCake = await createCake({
       name: sanitizedName,
-      description: sanitize(description, 500) || 'Bolo caseiro feito com ingredientes selecionados.',
       ingredients: sanitizeIngredients(ingredients),
       category: validCategory,
       price: numPrice,
@@ -303,14 +303,13 @@ apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) =>
       return;
     }
 
-    const { name, description, ingredients, category, price, stock_quantity, image_data_url, is_active } = req.body;
+    const { name, ingredients, category, price, stock_quantity, image_data_url, is_active } = req.body;
     const updateData: Record<string, unknown> = {};
 
     if (name !== undefined) updateData.name = sanitize(name, 100);
-    if (description !== undefined) updateData.description = sanitize(description, 500);
     if (ingredients !== undefined) updateData.ingredients = sanitizeIngredients(ingredients);
     if (category !== undefined) {
-      if (!['comum', 'com_cobertura'].includes(category)) {
+      if (!isItemCategory(category)) {
         res.status(400).json({ error: 'Categoria inválida.' });
         return;
       }

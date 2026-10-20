@@ -8,7 +8,6 @@ let usePostgres = false;
 const cakeColumns = `
   id,
   nome AS name,
-  descricao AS description,
   ingredientes AS ingredients,
   categoria AS category,
   preco AS price,
@@ -135,10 +134,9 @@ async function runSchema(pool: Pool, schema: string): Promise<void> {
     CREATE TABLE IF NOT EXISTS bolos (
       id SERIAL PRIMARY KEY,
       nome VARCHAR(150) NOT NULL,
-      descricao TEXT NOT NULL DEFAULT '',
       ingredientes TEXT[] NOT NULL DEFAULT '{}',
       categoria VARCHAR(50) NOT NULL DEFAULT 'comum'
-        CHECK (categoria IN ('comum', 'com_cobertura')),
+        CHECK (categoria IN ('comum', 'com_cobertura', 'sobremesas')),
       preco NUMERIC(10, 2) NOT NULL CHECK (preco >= 0),
       quantidade_disponivel INTEGER NOT NULL DEFAULT 0 CHECK (quantidade_disponivel >= 0),
       imagem_url TEXT NOT NULL DEFAULT '',
@@ -209,6 +207,7 @@ async function runSchema(pool: Pool, schema: string): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_itens_pedido_pedido ON itens_pedido(pedido_id);
     CREATE INDEX IF NOT EXISTS idx_logs_criado_em ON logs(criado_em DESC);
     CREATE INDEX IF NOT EXISTS idx_logs_pedido ON logs(pedido_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_admin_unico ON usuarios ((TRUE));
   `);
 }
 
@@ -219,7 +218,7 @@ async function ensureInitialAdmin(pool: Pool): Promise<void> {
   await pool.query(
     `INSERT INTO usuarios (nome_usuario, senha_hash)
      VALUES ($1, $2)
-     ON CONFLICT (nome_usuario) DO NOTHING`,
+     ON CONFLICT DO NOTHING`,
     [username, hashPassword(password)]
   );
 }
@@ -290,12 +289,11 @@ export async function createCake(
   image?: CakeImageInput | null
 ): Promise<Cake> {
   const result = await requirePool().query(
-    `INSERT INTO bolos (nome, descricao, ingredientes, categoria, preco, quantidade_disponivel, imagem_url, ativo, imagem_dados, imagem_tipo)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO bolos (nome, ingredientes, categoria, preco, quantidade_disponivel, imagem_url, ativo, imagem_dados, imagem_tipo)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING ${cakeColumns}`,
     [
       data.name,
-      data.description,
       data.ingredients,
       data.category,
       data.price,
@@ -314,14 +312,13 @@ export async function updateCake(id: number, data: Partial<Cake>, image?: CakeIm
   if (!existing) return null;
   const merged = { ...existing, ...data };
   const result = await requirePool().query(
-    `UPDATE bolos SET nome = $1, descricao = $2, ingredientes = $3, categoria = $4, preco = $5,
-       quantidade_disponivel = $6, imagem_url = $7, ativo = $8,
-       imagem_dados = COALESCE($9, imagem_dados), imagem_tipo = COALESCE($10, imagem_tipo),
+    `UPDATE bolos SET nome = $1, ingredientes = $2, categoria = $3, preco = $4,
+       quantidade_disponivel = $5, imagem_url = $6, ativo = $7,
+       imagem_dados = COALESCE($8, imagem_dados), imagem_tipo = COALESCE($9, imagem_tipo),
        atualizado_em = CURRENT_TIMESTAMP
-     WHERE id = $11 RETURNING ${cakeColumns}`,
+     WHERE id = $10 RETURNING ${cakeColumns}`,
     [
       merged.name,
-      merged.description,
       merged.ingredients,
       merged.category,
       merged.price,

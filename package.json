@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
+    "db:setup": "node scripts/local-db.mjs setup",
+    "db:status": "node scripts/local-db.mjs status",
+    "db:sql": "node scripts/local-db.mjs sql",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "build:vercel": "vite build",
     "start": "node dist/server.cjs",
