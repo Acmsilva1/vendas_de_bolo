@@ -232,6 +232,8 @@ select,
     padding: 0;
   }
 
+  .admin-dashboard .mobile-stock-table button[role="switch"] { padding-inline: 0.5rem; }
+
   .cake-editor-form > div { min-width: 0; }
   .cake-editor-form label { font-size: 12px; font-weight: 500; }
   .cake-editor-form input:not([type='file']),

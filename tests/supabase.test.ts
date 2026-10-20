@@ -3,7 +3,7 @@ import test from 'node:test';
 import { getSupabaseConfig, supabaseRpc } from '../api/_supabase.js';
 import {
   initDatabase, isPostgresActive, verifyAdminCredentials, hashPassword,
-  getAllCakes, getCakeImage, createCake, updateCake, updateStock, deleteCake,
+  getStoreStatus, setStoreStatus, getAllCakes, getCakeImage, createCake, updateCake, updateStock, deleteCake,
   createOrder, getAllOrders, updateOrderStatus, deleteOrder, getAnnualSalesStats,
   isLoginBlocked, registerLoginFailure, clearLoginFailures, updateTelegramDelivery
 } from '../api/_db.js';
@@ -72,7 +72,8 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   const hash = hashPassword('test-password');
   const mock = t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
     const body = JSON.parse(String(options.body)); calls.push(body);
-    return Response.json(body.p_operation === 'health' ? { ok: true, version: 14 } : body.p_operation === 'admin_hash' ? hash
+    return Response.json(body.p_operation === 'health' ? { ok: true, version: 15 } : body.p_operation === 'admin_hash' ? hash
+      : body.p_operation === 'store_get' || body.p_operation === 'store_set' ? {is_open: body.p_data.is_open ?? true,updated_at:'2026-10-20T15:00:00Z'}
       : body.p_operation === 'cake_image' ? { hex: '0102ff', mimeType: 'image/png' }
       : body.p_operation === 'cakes' || body.p_operation === 'orders' ? [] : null);
   });
@@ -80,6 +81,9 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   assert.equal(isPostgresActive(), true);
   assert.equal(await verifyAdminCredentials('Admin', 'test-password'), true);
   assert.equal(await verifyAdminCredentials('Admin', 'incorrect'), false);
+  assert.equal((await getStoreStatus()).is_open,true);
+  assert.equal((await setStoreStatus(false)).is_open,false);
+  assert.equal(calls.find(call=>call.p_operation==='store_set')?.p_data.is_open,false);
   assert.deepEqual(await getAllCakes(true), []);
   assert.deepEqual(await getCakeImage(1), { data: Buffer.from([1, 2, 255]), mimeType: 'image/png' });
   const cake = { name: 'Teste', ingredients: ['cacau'], category: 'comum' as const, price: 10, stock_quantity: 2, image_url: '', is_active: true };
@@ -105,7 +109,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   mock.mock.mockImplementation(async () => Response.json({ ok: true }));
   const outdated = await initDatabase();
   assert.equal(outdated.isPostgres, false);
-  assert.match(outdated.message, /014_reservas_temporarias/);
+  assert.match(outdated.message, /015_status_loja/);
   // HTTPS errors must fail closed; never fall back to an old DATABASE_URL.
   mock.mock.mockImplementation(async () => new Response('', { status: 401 }));
   assert.equal((await initDatabase()).isPostgres, false);

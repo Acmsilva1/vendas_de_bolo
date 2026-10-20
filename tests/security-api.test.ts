@@ -17,28 +17,35 @@ let replayed=false;
 let orderFailure=0;
 let cartFailure=0;
 let stockConflict=false;
+let storeIsOpen=true;
 const fixtureHash=hashPassword('fixture-password');
-const cake=(id=1)=>({id,name:'Fixture',ingredients:[],category:'comum',price:10,stock_quantity:5,image_url:'',is_active:id===1});
+const visibility=new Map([[1,true],[2,false],[3,true]]);
+const cake=(id=1)=>({id,name:'Fixture',ingredients:[],category:'comum',price:10,stock_quantity:id===3?0:5,image_url:'',is_active:visibility.get(id)??false});
 const order={id:100,order_code:'FIXTURE',customer_name:'Fixture',customer_phone:'27999990000',delivery_block:'A',delivery_apartment:'1',payment_method:'pix',total_amount:10,status:'pendente',telegram_sent:false,items:[{cake_id:1,cake_name:'Fixture',quantity:1,unit_price:10,subtotal:10}]};
 globalThis.fetch=(async(input:any,options:any)=>{
  if(String(input).startsWith('http://127.0.0.1:'))return nativeFetch(input,options);
  if(!String(input).startsWith(process.env.URL_SUPABASE!))throw Error('External request blocked');
  const {p_operation:op,p_data:data}=JSON.parse(options.body);rpcCalls.push({op,data});
- if(op==='health')return Response.json({ok:true,version:14});
+ if(op==='health')return Response.json({ok:true,version:15});
+ if(op==='store_get')return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});
+ if(op==='store_set'){storeIsOpen=data.is_open;return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});}
  if(op==='admin_hash')return Response.json(data.username.toLowerCase()==='admin'?fixtureHash:null);
  if(op==='login_blocked')return Response.json(false);
- if(op==='cakes')return Response.json(data.onlyActive?[cake()]:[cake(),cake(2)]);
- if(op==='cake')return Response.json(cake(data.id));
+ if(op==='cakes'&&data.onlyActive&&!storeIsOpen)return Response.json([]);
+ if(op==='cakes')return Response.json([cake(),cake(2),cake(3)].filter(c=>!data.onlyActive||c.is_active));
+ if(op==='cake')return Response.json(data.onlyActive&&!storeIsOpen?null:cake(data.id));
  if(op==='cake_image')return Response.json({hex:'89504e470d0a1a0a',mimeType:'image/png'});
  if(op==='orders')return Response.json([order]);
  if(op==='cake_update'&&stockConflict)return Response.json({reservation_conflict:true,error:'Reserved units'});
  if(op==='cake_update'){
   if(data.price<0||data.price===null||data.stock_quantity===null)return Response.json({message:'constraint'}, {status:400});
+  if(typeof data.is_active==='boolean')visibility.set(data.id,data.is_active);
   return Response.json({...cake(data.id),...data});
  }
  if((op==='stock'||op==='cake_update')&&stockConflict)return Response.json({reservation_conflict:true,error:'Reserved units'});
+ if((op==='cart_set'||op==='order_create')&&!storeIsOpen&&!(op==='order_create'&&replayed))return Response.json({success:false,statusCode:409,error:'A loja está fechada no momento.'});
  if(op==='cart_get'||op==='cart_set')return Response.json({success:!cartFailure,...(cartFailure?{statusCode:cartFailure,error:'cart rejected'}:{}),cart:{version:1,server_time:new Date().toISOString(),items:[]}});
- if(op==='stock')return Response.json(cake(data.id));
+ if(op==='stock')return Response.json({...cake(data.id),stock_quantity:data.newStock});
  if(op==='cake_delete'||op==='order_delete')return Response.json(true);
  if(op==='order_status')return Response.json({...order,status:data.status});
  if(op==='order_create')return Response.json(orderFailure ? {order:null,success:false,statusCode:orderFailure,error:'fixture-rejection'} : {order,success:true,replayed});
@@ -61,7 +68,7 @@ async function probe(name:string,path:string,expected:number,options:any={}){
 }
 const json=(value:any,auth=true,origin=base)=>({method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':'fixture-request-0001','X-Cart-Token':'t'.repeat(43),...(auth?{cookie:adminCookie}:{}),origin},body:JSON.stringify(value)});
 try{
- for(const [method,path]of [['GET','/orders'],['GET','/stats'],['GET','/dashboard'],['POST','/cakes'],['PUT','/cakes/1'],['PATCH','/cakes/1/stock'],['DELETE','/cakes/1'],['DELETE','/orders/1'],['PATCH','/orders/1/status']])await probe('anonymous denied '+method+' '+path,path,401,{method});
+ for(const [method,path]of [['PUT','/store/status'],['GET','/orders'],['GET','/stats'],['GET','/dashboard'],['POST','/cakes'],['PUT','/cakes/1'],['PATCH','/cakes/1/stock'],['DELETE','/cakes/1'],['DELETE','/orders/1'],['PATCH','/orders/1/status']])await probe('anonymous denied '+method+' '+path,path,401,{method});
  await probe('forged cookie denied','/orders',401,{headers:{cookie:'__Host-delicias_admin=forged.token'}});
  await probe('wrong origin denied','/cakes/1',403,{method:'DELETE',headers:{cookie:adminCookie,origin:'https://foreign.invalid'}});
  await probe('missing origin denied','/cakes/1',403,{method:'DELETE',headers:{cookie:adminCookie}});
@@ -73,6 +80,22 @@ try{
  await probe('malformed cookie handled safely','/auth/session',200,{headers:{cookie:'__Host-delicias_admin=%ZZ'}});
  await probe('inactive cake hidden','/cakes/2',404);
  await probe('inactive cake image hidden','/cakes/2/image',404);
+ const offStock=await probe('OFF flavor stock remains editable','/cakes/2/stock',200,{...json({new_stock:7}),method:'PATCH'});
+ assert.equal(JSON.parse(offStock.text).cake.is_active,false);
+ assert.equal(JSON.parse(offStock.text).cake.stock_quantity,7);
+ const switchedOff=await probe('admin can turn flavor OFF','/cakes/1',200,{...json({is_active:false}),method:'PUT'});
+ assert.equal(JSON.parse(switchedOff.text).cake.stock_quantity,5);
+ const publicList=await probe('public catalog respects OFF and retains ON with zero','/cakes',200);
+ assert.deepEqual(JSON.parse(publicList.text).cakes.map((c:any)=>c.id),[3]);
+ assert.equal(JSON.parse(publicList.text).cakes[0].stock_quantity,0);
+ const allList=await probe('admin retains all registered flavors','/cakes?all=true',200,{headers:{cookie:adminCookie}});
+ assert.equal(JSON.parse(allList.text).cakes.length,3);
+ assert.equal(JSON.parse(allList.text).cakes.find((c:any)=>c.id===1).is_active,false);
+ const anonymousAll=await probe('anonymous cannot list OFF flavors','/cakes?all=true',200);
+ assert.deepEqual(JSON.parse(anonymousAll.text).cakes.map((c:any)=>c.id),[3]);
+ await probe('admin can restore flavor ON','/cakes/1',200,{...json({is_active:true}),method:'PUT'});
+ const restored=await probe('ON flavor reappears','/cakes',200);
+ assert.deepEqual(JSON.parse(restored.text).cakes.map((c:any)=>c.id),[1,3]);
  await probe('strict numeric IDs','/cakes/1abc',400);
  await probe('negative price rejected at API','/cakes/1',400,{...json({price:-1}),method:'PUT'});
  await probe('non-finite price rejected at API','/cakes/1',400,{...json({price:'Infinity'}),method:'PUT'});
@@ -112,6 +135,28 @@ try{
  await probe('reused key conflict preserved','/orders',409,json({...payload,items:[{cake_id:1,quantity:1}]},false));
  orderFailure=429;
  await probe('order rate limit status preserved','/orders',429,json({...payload,items:[{cake_id:1,quantity:1}]},false));
+ orderFailure=0;
+ const status=await probe('store status public','/store/status',200);
+ assert.equal(JSON.parse(status.text).store.is_open,true);assert.equal(status.r.headers.get('cache-control'),'no-store');
+ await probe('store toggle cross origin denied','/store/status',403,{...json({is_open:false},true,'https://foreign.invalid'),method:'PUT'});
+ await probe('store toggle rejects string','/store/status',400,{...json({is_open:'false'}),method:'PUT'});
+ const closed=await probe('admin closes store','/store/status',200,{...json({is_open:false}),method:'PUT'});
+ assert.equal(JSON.parse(closed.text).store.is_open,false);
+ const closedCatalog=await probe('closed store public catalog empty','/cakes',200);
+ assert.deepEqual(JSON.parse(closedCatalog.text).cakes,[]);assert.equal(JSON.parse(closedCatalog.text).store.is_open,false);
+ await probe('closed store cake hidden','/cakes/1',404);
+ await probe('closed store public image hidden','/cakes/1/image',404);
+ const adminClosed=await probe('closed store admin catalog intact','/cakes?all=true',200,{headers:{cookie:adminCookie}});
+ assert.equal(JSON.parse(adminClosed.text).cakes.length,3);
+ await probe('closed store admin image allowed','/cakes/1/image',200,{headers:{cookie:adminCookie}});
+ await probe('closed store admin stock allowed','/cakes/2/stock',200,{...json({new_stock:9}),method:'PATCH'});
+ await probe('closed store admin flavor flag allowed','/cakes/2',200,{...json({is_active:false}),method:'PUT'});
+ await probe('closed store refuses new cart hold','/cart/reservation',409,json({items:[{cake_id:1,quantity:1}],version:0},false));
+ await probe('closed store refuses new order','/orders',409,json(validPayload,false));
+ replayed=true;await probe('closed store allows existing order replay','/orders',200,json(validPayload,false));replayed=false;
+ await probe('admin reopens store','/store/status',200,{...json({is_open:true}),method:'PUT'});
+ const reopened=await probe('reopened store restores active flavors','/cakes',200);
+ assert.deepEqual(JSON.parse(reopened.text).cakes.map((c:any)=>c.id),[1,3]);
  const hashAcceptsMalformed=verifyPasswordHash('anything','scrypt$fixture$zz');
  if(hashAcceptsMalformed)findings.push({name:'malformed scrypt hex accepts arbitrary password',conditional:'requires malformed hash stored in database'});else passed++;
  let cookieThrows=false;try{readCookie('delicias_admin=%ZZ','delicias_admin');}catch{cookieThrows=true;}

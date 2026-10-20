@@ -1,18 +1,23 @@
 import React, { useEffect, useState } from 'react';
 import { Cake, ShoppingCart, ShieldCheck } from 'lucide-react';
+import type { StoreStatus } from '../../shared/store';
 
 interface NavbarProps {
   currentView: 'catalog' | 'admin';
   onViewChange: (view: 'catalog' | 'admin') => void;
   cartCount: number;
   onOpenCart: () => void;
+  storeStatus?: StoreStatus | null;
+  onToggleStore?: () => void;
+  storeUpdating?: boolean;
+  storeError?: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
   currentView,
   onViewChange,
   cartCount,
-  onOpenCart
+  onOpenCart, storeStatus, onToggleStore, storeUpdating = false, storeError = false
 }) => {
   const [brasiliaTime, setBrasiliaTime] = useState(() => new Date());
 
@@ -60,6 +65,21 @@ export const Navbar: React.FC<NavbarProps> = ({
             >
               {formattedBrasiliaTime}
             </time>
+            {currentView === 'admin' && onToggleStore && (
+              <button
+                type="button"
+                role="switch"
+                aria-label="Loja aberta"
+                aria-checked={storeStatus?.is_open ?? false}
+                disabled={!storeStatus || storeUpdating}
+                onClick={onToggleStore}
+                title={storeError ? 'Status da loja indisponível. Consulte o aviso abaixo do cabeçalho.' : !storeStatus ? 'Carregando status da loja' : storeStatus.is_open ? 'Fechar loja para novas compras' : 'Abrir loja com os sabores e estoques preparados'}
+                className={`inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border px-2 py-1.5 text-[10px] font-bold whitespace-nowrap disabled:opacity-50 sm:px-3 sm:text-xs ${storeStatus?.is_open ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}
+              >
+                <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${storeStatus?.is_open ? 'bg-emerald-600' : 'bg-red-400'}`} />
+                {storeUpdating ? 'Salvando…' : !storeStatus ? (storeError ? 'Loja: erro' : 'Loja…') : storeStatus.is_open ? 'ON • Aberta' : 'OFF • Fechada'}
+              </button>
+            )}
             <div className="flex bg-violet-50/90 p-0.5 sm:p-1 rounded-xl border border-violet-200/80">
               <button
                 type="button"
@@ -95,7 +115,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </div>
 
             {/* Botão do carrinho (Apenas visível no catálogo) */}
-            {currentView === 'catalog' && (
+            {currentView === 'catalog' && storeStatus?.is_open && (
               <button
                 type="button"
                 id="btn-nav-cart"

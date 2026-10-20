@@ -5,6 +5,8 @@ import { databaseReadiness } from './_database-ready.js';
 import { whatsappGreeting } from './_greeting.js';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import {
+  getStoreStatus,
+  setStoreStatus,
   getCartReservation,
   setCartReservation,
   getAllCakes,
@@ -205,6 +207,21 @@ apiRouter.post('/auth/logout', requireAdmin, (req: Request, res: Response) => {
 // ROTAS DE BOLOS (CATÁLOGO & ESTOQUE)
 // ==============================================================================
 
+apiRouter.get('/store/status', async (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json({ store: await getStoreStatus() }); }
+  catch { res.status(503).json({ error: 'Não foi possível consultar o status da loja.' }); }
+});
+
+apiRouter.put('/store/status', requireAdmin, async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (typeof req.body?.is_open !== 'boolean') {
+    res.status(400).json({ error: 'Informe se a loja está aberta ou fechada.' }); return;
+  }
+  try { res.json({ store: await setStoreStatus(req.body.is_open) }); }
+  catch { res.status(503).json({ error: 'Não foi possível alterar o status da loja.' }); }
+});
+
 // Reservas temporárias pertencem ao segredo da sacola, nunca ao IP ou a um ID público.
 apiRouter.get('/cart/reservation', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -246,8 +263,8 @@ apiRouter.get('/cakes', async (req: Request, res: Response) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
     const onlyActive = req.query.all !== 'true' || !isAdminRequest(req);
-    const cakes = await getAllCakes(onlyActive);
-    res.json({ cakes, isPostgres: isPostgresActive() });
+    const [cakes, store] = await Promise.all([getAllCakes(onlyActive), getStoreStatus()]);
+    res.json({ cakes, store, isPostgres: isPostgresActive() });
   } catch (err) {
     console.error('Erro ao buscar bolos:', err);
     res.status(500).json({ error: 'Erro ao listar bolos.' });
@@ -261,7 +278,7 @@ apiRouter.get('/cakes/:id/image', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
-    const cake = await getCakeById(id);
+    const cake = await getCakeById(id, !isAdminRequest(req));
     if (!cake || (!cake.is_active && !isAdminRequest(req))) {
       res.status(404).json({ error: 'Imagem não encontrada.' });
       return;

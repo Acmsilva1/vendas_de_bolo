@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { ReservationResult as SharedReservationResult } from '../shared/reservations.js';
+import type { StoreStatus } from '../shared/store.js';
 import { AppStats, Cake, Order, OrderItem } from './_types.js';
 import { getSupabaseConfig, supabaseRpc, type SupabaseConfig } from './_supabase.js';
 import { validOrderItems, validIdempotencyKey } from './_validation.js';
@@ -89,8 +90,8 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     const config = getSupabaseConfig();
     if (config) {
       const health = await supabaseRpc<{ ok: boolean; version?: number }>(config, 'health');
-      if (!health?.ok || health.version !== 14) {
-        throw new Error('Supabase HTTPS: execute a migration 014_reservas_temporarias.sql antes de usar este backend.');
+      if (!health?.ok || health.version !== 15) {
+        throw new Error('Supabase HTTPS: execute a migration 015_status_loja.sql antes de usar este backend.');
       }
       if (process.env.ADMIN_INITIAL_PASSWORD) {
         await supabaseRpc(config, 'ensure_admin', {
@@ -141,7 +142,7 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     usePostgres = true;
     await runSchema(pgPool, schema);
     // The local database uses the same transactional functions as HTTPS, in its own schema.
-    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql']) {
+    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql']) {
       const sql = (await readFile(resolve(process.cwd(), 'migrations', name), 'utf8'))
         .replaceAll('ALTER FUNCTION public.vendas_backend(text, jsonb) SET SCHEMA vendas_de_bolo;', '')
         .replaceAll('vendas_de_bolo.vendas_backend(text, jsonb) RENAME', 'vendas_de_bolo.local_backend(text, jsonb) RENAME')
@@ -334,6 +335,15 @@ async function reservationRpc<T>(operation: string, data: Record<string, unknown
 }
 
 export type ReservationResult = SharedReservationResult<Cake>;
+
+export async function getStoreStatus(): Promise<StoreStatus> {
+  return reservationRpc('store_get');
+}
+
+export async function setStoreStatus(isOpen: boolean): Promise<StoreStatus> {
+  if (typeof isOpen !== 'boolean') throw new Error('Estado da loja inválido.');
+  return reservationRpc('store_set', { is_open: isOpen });
+}
 
 function reservationHash(token: string): string {
   if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error('Token da sacola inválido.');

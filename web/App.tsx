@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cake, Order } from './types';
 import { useReservations } from './reservations';
+import { StoreClosed } from './components/StoreClosed';
+import type { StoreStatus } from '../shared/store';
 import { Navbar } from './components/Navbar';
 import { CakeCatalog } from './components/CakeCatalog';
 import { OrderModal } from './components/OrderModal';
@@ -43,23 +45,39 @@ export const App: React.FC = () => {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  const [storeStatus, setStoreStatus] = useState<StoreStatus | null>(null);
+  const [storeUpdating, setStoreUpdating] = useState(false);
+  const [storeLoadError, setStoreLoadError] = useState('');
+  const cakesRequest = useRef(0);
+
   // Buscar bolos do backend
-  const fetchCakes = async (includeInactive = false) => {
+  const fetchCakes = async (includeInactive = currentView === 'admin' && isAdminAuthenticated) => {
+    const request = ++cakesRequest.current;
     try {
       const res = await fetch(includeInactive ? '/api/cakes?all=true' : '/api/cakes');
       if (includeInactive && res.status === 401) setIsAdminAuthenticated(false);
       if (res.ok) {
         const data = await res.json();
+        if (request !== cakesRequest.current) return;
+        if (typeof data.store?.is_open !== 'boolean') throw new Error('O backend ainda não fornece o status da loja. Reinicie o servidor local ou atualize o deploy com a migration 015.');
+        setStoreLoadError('');
+        setStoreStatus(data.store);
+        if (!data.store.is_open) setIsCartModalOpen(false);
         setCakes(data.cakes || []);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Não foi possível consultar o status da loja.');
       }
     } catch (err) {
+      if (request !== cakesRequest.current) return;
+      setStoreLoadError(err instanceof Error ? err.message : 'Não foi possível consultar o status da loja.');
       console.error('Erro ao buscar bolos:', err);
     } finally {
       setIsLoadingCakes(false);
     }
   };
 
-  const reservations = useReservations(message => showToast(message, 'error'), () => { void fetchCakes(false); });
+  const reservations = useReservations(message => showToast(message, 'error'), () => { void fetchCakes(); });
   const cart = reservations.cart;
 
   const checkAdminSession = async () => {
@@ -84,6 +102,7 @@ export const App: React.FC = () => {
   }, [currentView]);
 
   useEffect(() => {
+    if (currentView === 'admin' && isAdminAuthenticated) void fetchCakes(true);
     const refresh = () => { if (document.visibilityState === 'visible') void fetchCakes(currentView === 'admin' && isAdminAuthenticated); };
     const refreshInterval = window.setInterval(refresh, currentView === 'catalog' ? 3000 : 60_000);
     window.addEventListener('focus', refresh);
@@ -94,7 +113,7 @@ export const App: React.FC = () => {
   const handleViewChange = (view: 'catalog' | 'admin') => {
     setCurrentView(view);
     if (view === 'catalog') fetchCakes(false);
-    if (view === 'admin' && isAdminAuthenticated) fetchCakes(false);
+    if (view === 'admin' && isAdminAuthenticated) fetchCakes(true);
   };
 
   const handleAdminLogin = async (event: React.FormEvent) => {
@@ -112,7 +131,28 @@ export const App: React.FC = () => {
     }
     setIsAdminAuthenticated(true);
     setLoginPassword('');
-    await fetchCakes(false);
+    await fetchCakes(true);
+  };
+
+  const handleToggleStore = async () => {
+    if (!storeStatus || storeUpdating) return;
+    setStoreUpdating(true);
+    // Invalidate a catalog response started before this change.
+    cakesRequest.current++;
+    try {
+      const response = await fetch('/api/store/status', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_open: !storeStatus.is_open })
+      });
+      const data = await response.json();
+      if (!response.ok || typeof data.store?.is_open !== 'boolean') throw new Error(data.error || 'Não foi possível alterar o status da loja.');
+      setStoreStatus(data.store);
+      if (!data.store.is_open) { setIsCartModalOpen(false); void reservations.refresh(); }
+      await fetchCakes(true);
+      showToast(data.store.is_open ? 'Loja aberta! Sua vitrine está pronta para receber pedidos.' : 'Loja fechada. Você pode preparar o estoque e os sabores à vontade.', 'success');
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'Não foi possível alterar o status da loja.', 'error');
+    } finally { setStoreUpdating(false); }
   };
 
   const handleAdminLogout = async () => {
@@ -130,7 +170,7 @@ export const App: React.FC = () => {
   const handleUpdateCartQuantity = (cakeId: number, qty: number) => { void reservations.update(cakeId, qty); };
   const handleOrderSuccess = (order: Order) => {
     reservations.clear();
-    fetchCakes(false);
+    fetchCakes();
     showToast(`Reserva #${order.order_code} confirmada!`, 'success');
   };
 
@@ -172,8 +212,21 @@ export const App: React.FC = () => {
         currentView={currentView}
         onViewChange={handleViewChange}
         cartCount={totalCartCount}
-        onOpenCart={() => setIsCartModalOpen(true)}
+        onOpenCart={() => { if (storeStatus?.is_open) setIsCartModalOpen(true); }}
+        storeStatus={storeStatus}
+        onToggleStore={isAdminAuthenticated ? handleToggleStore : undefined}
+        storeUpdating={storeUpdating}
+        storeError={Boolean(storeLoadError)}
       />
+
+      {currentView === 'admin' && isAdminAuthenticated && storeLoadError && (
+        <div role="alert" className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-900">
+          <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-2">
+            <span>{storeLoadError}</span>
+            <button type="button" onClick={() => { void fetchCakes(true); }} className="min-h-8 font-semibold underline">Tentar novamente</button>
+          </div>
+        </div>
+      )}
 
       {/* Conteúdo Principal com Suavização de Tela Motion */}
       <main className="flex-1 pb-24 sm:pb-16">
@@ -191,7 +244,9 @@ export const App: React.FC = () => {
                   <div className="inline-block w-8 h-8 border-2 border-pink-400 border-t-transparent rounded-full animate-spin mb-3" />
                   <p>Aquecendo o forno e carregando os bolos caseiros...</p>
                 </div>
-              ) : (
+              ) : !storeStatus ? (
+                <div role="status" className="px-6 py-20 text-center text-sm text-slate-600">Não foi possível consultar a loja. Tentando novamente…</div>
+              ) : !storeStatus.is_open ? <StoreClosed /> : (
                 <div
                   className="relative min-h-full bg-rose-50/80"
                   style={{
@@ -224,7 +279,7 @@ export const App: React.FC = () => {
                       onAddToCart={handleAddToCart}
                       reservationBusy={reservations.busy}
                       pendingReservationId={reservations.pendingId}
-                      onOpenCheckout={() => setIsCartModalOpen(true)}
+                      onOpenCheckout={() => { if (storeStatus?.is_open) setIsCartModalOpen(true); }}
                     />
                   </div>
                 </div>
@@ -278,7 +333,7 @@ export const App: React.FC = () => {
             >
               <AdminDashboard
                 cakes={cakes}
-                onRefreshCakes={() => fetchCakes(false)}
+                onRefreshCakes={() => fetchCakes(true)}
                 onLogout={handleAdminLogout}
                 onNotify={showToast}
               />

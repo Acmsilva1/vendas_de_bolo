@@ -24,7 +24,7 @@ import {
 
 interface AdminDashboardProps {
   cakes: Cake[];
-  onRefreshCakes: () => void;
+  onRefreshCakes: () => void | Promise<void>;
   onLogout: () => void;
   onNotify: (message: string, type?: 'success' | 'error') => void;
 }
@@ -53,6 +53,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [stats, setStats] = useState<AppStats | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [updatingStockId, setUpdatingStockId] = useState<number | null>(null);
+
+  const [updatingAvailabilityId, setUpdatingAvailabilityId] = useState<number | null>(null);
 
   // Modal para Adicionar / Editar Bolo
   const [isCakeModalOpen, setIsCakeModalOpen] = useState(false);
@@ -179,6 +181,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       onNotify('Não foi possível atualizar o estoque.', 'error');
     } finally {
       setUpdatingStockId(null);
+    }
+  };
+
+  const handleToggleAvailability = async (cake: Cake) => {
+    if (updatingAvailabilityId !== null) return;
+    setUpdatingAvailabilityId(cake.id);
+    try {
+      const response = await fetch(`/api/cakes/${cake.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: !cake.is_active })
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error || 'Não foi possível alterar a disponibilidade.');
+      }
+      await onRefreshCakes();
+      void fetchOrdersAndStats();
+      onNotify(cake.is_active ? `"${cake.name}" está OFF e não aparece na loja.` : `"${cake.name}" está ON na loja.`, 'success');
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : 'Não foi possível alterar a disponibilidade.', 'error');
+    } finally {
+      setUpdatingAvailabilityId(null);
     }
   };
 
@@ -369,61 +394,61 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
 
       {/* Cards de métricas de estoque */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-5 sm:mb-8">
+      <div className="grid grid-cols-3 gap-1.5 sm:gap-4 mb-3 sm:mb-6">
         {/* Total de Unidades em Estoque */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-violet-100 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-slate-600 font-medium">Estoque Total</span>
-            <div className="group relative p-2 rounded-xl bg-pink-500/15 text-pink-600">
+        <div className="min-w-0 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-violet-100 shadow-sm">
+          <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+            <span className="text-[10px] leading-tight sm:text-xs text-slate-600 font-medium"><span className="sm:hidden">Estoque</span><span className="hidden sm:inline">Estoque Total</span></span>
+            <div className="group relative hidden sm:block p-1.5 rounded-lg bg-pink-500/15 text-pink-600">
               <Package className="w-4 h-4" aria-label="Estoque total" />
               <span role="tooltip" className="pointer-events-none absolute right-0 top-full z-10 mt-2 w-44 rounded-lg bg-slate-900 px-2.5 py-2 text-center text-[10px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 Quantidade total em estoque
               </span>
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-serif font-bold text-slate-900">
-            {stats ? stats.totalUnitsInStock : cakes.reduce((s, c) => s + c.stock_quantity, 0)} <span className="text-sm font-sans font-normal text-slate-600">un</span>
+          <div className="text-base leading-tight sm:text-2xl tabular-nums whitespace-nowrap font-serif font-bold text-slate-900">
+            {stats ? stats.totalUnitsInStock : cakes.reduce((s, c) => s + c.stock_quantity, 0)} <span className="text-[9px] sm:text-xs font-sans font-normal text-slate-600">un</span>
           </div>
-          <p className="text-[11px] text-slate-600 mt-1">
-            Distribuição em {cakes.length} sabores
+          <p className="text-[9px] leading-tight sm:text-[11px] text-slate-600 mt-1">
+            <span className="hidden sm:inline">Distribuição em </span>{cakes.length} sabores
           </p>
         </div>
 
         {/* Itens com Baixo Estoque */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-violet-100 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-slate-600 font-medium">Estoque Crítico (≤2)</span>
-            <div className="group relative p-2 rounded-xl bg-pink-600/15 text-pink-600">
+        <div className="min-w-0 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-violet-100 shadow-sm">
+          <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+            <span className="text-[10px] leading-tight sm:text-xs text-slate-600 font-medium"><span className="sm:hidden">Crítico</span><span className="hidden sm:inline">Estoque Crítico (≤2)</span></span>
+            <div className="group relative hidden sm:block p-1.5 rounded-lg bg-pink-600/15 text-pink-600">
               <AlertTriangle className="w-4 h-4" aria-label="Estoque crítico" />
               <span role="tooltip" className="pointer-events-none absolute right-0 top-full z-10 mt-2 w-48 rounded-lg bg-slate-900 px-2.5 py-2 text-center text-[10px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 Sabores com estoque crítico
               </span>
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-serif font-bold text-pink-700">
-            {cakes.filter(c => c.stock_quantity <= 2).length} <span className="text-sm font-sans font-normal text-slate-600">sabores</span>
+          <div className="text-base leading-tight sm:text-2xl tabular-nums whitespace-nowrap font-serif font-bold text-pink-700">
+            {cakes.filter(c => c.stock_quantity <= 2).length} <span className="text-[9px] sm:text-xs font-sans font-normal text-slate-600 hidden sm:inline">sabores</span>
           </div>
-          <p className="text-[11px] text-slate-600 mt-1">
-            Requer nova fornada urgente
+          <p className="text-[9px] leading-tight sm:text-[11px] text-slate-600 mt-1">
+            <span className="sm:hidden">Sabores ≤2 un.</span><span className="hidden sm:inline">Requer nova fornada urgente</span>
           </p>
         </div>
 
         {/* Faturamento Estimado */}
-        <div className="p-4 sm:p-5 rounded-2xl bg-white border border-violet-100 shadow-sm">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-slate-600 font-medium">Faturamento diário</span>
-            <div className="group relative p-2 rounded-xl bg-emerald-500/15 text-emerald-400">
+        <div className="min-w-0 p-2.5 sm:p-4 rounded-xl sm:rounded-2xl bg-white border border-violet-100 shadow-sm">
+          <div className="flex items-center justify-between gap-1 mb-1 sm:mb-2">
+            <span className="text-[10px] leading-tight sm:text-xs text-slate-600 font-medium"><span className="sm:hidden">Vendas hoje</span><span className="hidden sm:inline">Faturamento diário</span></span>
+            <div className="group relative hidden sm:block p-1.5 rounded-lg bg-emerald-500/15 text-emerald-400">
               <DollarSign className="w-4 h-4" aria-label="Faturamento diário" />
               <span role="tooltip" className="pointer-events-none absolute right-0 top-full z-10 mt-2 w-44 rounded-lg bg-slate-900 px-2.5 py-2 text-center text-[10px] font-medium text-white opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 Faturamento das vendas de hoje
               </span>
             </div>
           </div>
-          <div className="text-2xl sm:text-3xl font-serif font-bold text-emerald-400">
+          <div className="text-base leading-tight sm:text-2xl tabular-nums whitespace-nowrap font-serif font-bold text-emerald-400">
             R$ {todayOrders.reduce((total, order) => total + order.total_amount, 0).toFixed(2).replace('.', ',')}
           </div>
-          <p className="text-[11px] text-slate-600 mt-1">
-            Total de {todayOrders.length} pedidos hoje
+          <p className="text-[9px] leading-tight sm:text-[11px] text-slate-600 mt-1">
+            <span className="hidden sm:inline">Total de </span>{todayOrders.length} pedidos<span className="hidden sm:inline"> hoje</span>
           </p>
         </div>
       </div>
@@ -624,6 +649,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           />
                           <div>
                             <div className="stock-item-name font-semibold text-slate-900">{cake.name}</div>
+                            <button
+                              type="button"
+                              role="switch"
+                              aria-checked={cake.is_active}
+                              aria-label={`Disponibilidade de ${cake.name}`}
+                              title="ON: aparece na loja e esgota no zero. OFF: fica oculto, sem apagar o cadastro."
+                              disabled={updatingAvailabilityId !== null}
+                              onClick={() => void handleToggleAvailability(cake)}
+                              className={`mt-1 inline-flex min-h-8 items-center gap-1.5 rounded-full border px-2 text-[10px] font-semibold disabled:opacity-50 ${cake.is_active ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-red-200 bg-red-50 text-red-700'}`}
+                            >
+                              <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${cake.is_active ? 'bg-emerald-600' : 'bg-red-400'}`} />
+                              {updatingAvailabilityId === cake.id ? 'Salvando…' : cake.is_active ? 'ON • Na loja' : 'OFF • Oculto'}
+                            </button>
                           </div>
                         </div>
                       </td>
