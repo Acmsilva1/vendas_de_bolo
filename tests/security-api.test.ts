@@ -26,7 +26,7 @@ globalThis.fetch=(async(input:any,options:any)=>{
  if(String(input).startsWith('http://127.0.0.1:'))return nativeFetch(input,options);
  if(!String(input).startsWith(process.env.URL_SUPABASE!))throw Error('External request blocked');
  const {p_operation:op,p_data:data}=JSON.parse(options.body);rpcCalls.push({op,data});
- if(op==='health')return Response.json({ok:true,version:15});
+ if(op==='health')return Response.json({ok:true,version:16});
  if(op==='store_get')return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});
  if(op==='store_set'){storeIsOpen=data.is_open;return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});}
  if(op==='admin_hash')return Response.json(data.username.toLowerCase()==='admin'?fixtureHash:null);

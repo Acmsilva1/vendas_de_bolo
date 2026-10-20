@@ -38,7 +38,7 @@ export async function supabaseRpc<T>(config: SupabaseConfig, operation: string, 
       throw new Error('Supabase HTTPS: chave secreta inválida ou sem permissão para vendas_backend.');
     }
     if (response.status === 404) {
-      throw new Error('Supabase HTTPS: execute as migrations 012_supabase_https.sql, 013_pedidos_seguros.sql 014_reservas_temporarias.sql e 015_status_loja.sql no SQL Editor.');
+      throw new Error('Supabase HTTPS: execute as migrations 012_supabase_https.sql, 013_pedidos_seguros.sql 014_reservas_temporarias.sql 015_status_loja.sql e 016_historico_reservas.sql no SQL Editor.');
     }
     throw new Error(`Supabase HTTPS: operação indisponível (HTTP ${response.status}). Confira a migration 012 e o schema.`);
   }

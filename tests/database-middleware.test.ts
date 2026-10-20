@@ -12,7 +12,7 @@ test('mesmo middleware local/Vercel bloqueia falha inicial e recupera após back
   let calls = 0;
   const nativeFetch = globalThis.fetch;
   t.mock.method(globalThis, 'fetch', async () => ++calls === 1
-    ? new Response('', { status: 503 }) : Response.json({ ok: true, version: 15 }));
+    ? new Response('', { status: 503 }) : Response.json({ ok: true, version: 16 }));
   const { requireDatabase, apiRouter } = await import('../api/index.js');
   const app = express();
   app.use('/api', requireDatabase, apiRouter);

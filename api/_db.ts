@@ -90,8 +90,8 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     const config = getSupabaseConfig();
     if (config) {
       const health = await supabaseRpc<{ ok: boolean; version?: number }>(config, 'health');
-      if (!health?.ok || health.version !== 15) {
-        throw new Error('Supabase HTTPS: execute a migration 015_status_loja.sql antes de usar este backend.');
+      if (!health?.ok || health.version !== 16) {
+        throw new Error('Supabase HTTPS: execute a migration 016_historico_reservas.sql antes de usar este backend.');
       }
       if (process.env.ADMIN_INITIAL_PASSWORD) {
         await supabaseRpc(config, 'ensure_admin', {
@@ -142,7 +142,7 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     usePostgres = true;
     await runSchema(pgPool, schema);
     // The local database uses the same transactional functions as HTTPS, in its own schema.
-    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql']) {
+    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql', '016_historico_reservas.sql']) {
       const sql = (await readFile(resolve(process.cwd(), 'migrations', name), 'utf8'))
         .replaceAll('ALTER FUNCTION public.vendas_backend(text, jsonb) SET SCHEMA vendas_de_bolo;', '')
         .replaceAll('vendas_de_bolo.vendas_backend(text, jsonb) RENAME', 'vendas_de_bolo.local_backend(text, jsonb) RENAME')
