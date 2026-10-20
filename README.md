@@ -40,18 +40,17 @@ O Git ignora `local_db.env`, `.env*` (exceto o exemplo), `node_modules/`, `.loca
 
 Variáveis obrigatórias:
 
-- `URL_SUPABASE`: URI PostgreSQL do Supabase Pooler, iniciada por `postgresql://`. Não use a URL HTTPS do projeto.
-- `PGSCHEMA`: use `vendas_de_bolo`.
+- `URL_SUPABASE`: `https://tndtlnmgofpzwuakvxdt.supabase.co` (URL HTTPS do projeto).
+- `SERVICE_ROLE_SUPABASE`: chave secreta do backend, `sb_secret_...` ou a chave legada `service_role`, obtida em Settings → API Keys. Não é a senha do PostgreSQL.
 - `ADMIN_SESSION_SECRET`: segredo aleatório com no mínimo 32 caracteres.
-- `ADMIN_INITIAL_USER`: usuário administrativo inicial.
-- `ADMIN_INITIAL_PASSWORD`: senha forte para criar o administrador inicial.
+
+Para admin já cadastrado na tabela `usuarios`, não são necessárias variáveis de login/senha. Opcionalmente, `ADMIN_INITIAL_USER` e `ADMIN_INITIAL_PASSWORD` criam o primeiro admin, sem substituir um existente.
 
 Variáveis já reconhecidas ou reservadas:
 
 - `TELEGRAM_BOT_TOKEN`
 - `TELEGRAM_CHAT_ID`
 - `ANON_KEY_SUPABASE`
-- `SERVICE_ROLE_SUPABASE`
 
 `ANON_KEY_SUPABASE` e `SERVICE_ROLE_SUPABASE` não devem receber o prefixo `VITE_`. A chave `service_role` jamais pode ser exposta ao navegador.
 
@@ -71,11 +70,20 @@ O login atual é próprio da aplicação, sem Supabase Auth. A tabela `usuarios`
 node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-`SERVICE_ROLE_SUPABASE` é a chave privilegiada do Supabase, não uma função SQL nem um usuário administrador. Ela e `ANON_KEY_SUPABASE` não são utilizadas pelo código atual e não precisam ser preenchidas para este fluxo. Não use os nomes traduzidos `FUNÇÃO_DE_SERVIÇO_SUPABASE` ou `ID_DO_CHAT_DO_TELEGRAM`: o backend lê exatamente os nomes documentados (`TELEGRAM_CHAT_ID` para o chat).
+`SERVICE_ROLE_SUPABASE` é obrigatória no modo HTTPS e permanece exclusivamente no backend. `ANON_KEY_SUPABASE` não é utilizada neste fluxo. Não use os nomes traduzidos `FUNÇÃO_DE_SERVIÇO_SUPABASE` ou `ID_DO_CHAT_DO_TELEGRAM`: o backend lê exatamente os nomes documentados (`TELEGRAM_CHAT_ID` para o chat).
 
-RLS e policies restritivas bloqueiam o acesso direto às tabelas por papéis sujeitos a RLS; privilégios de `PUBLIC`, `anon` e `authenticated` também são revogados. O backend usa a conexão PostgreSQL privilegiada (`postgres`) e verifica a sessão nas rotas administrativas. RLS não identifica o cookie da aplicação e não restringe papéis com `BYPASSRLS`, como `postgres` e `service_role`. Não exponha essas credenciais nem adicione o schema à lista de schemas públicos da Data API.
+RLS e policies restritivas bloqueiam o acesso direto às tabelas por papéis sujeitos a RLS; privilégios de `PUBLIC`, `anon` e `authenticated` também são revogados. O backend chama a RPC `public.vendas_backend` por HTTPS com sua chave secreta e verifica a sessão nas rotas administrativas. A RPC tem operações fixas, executa como seu proprietário (`postgres`) e permite execução somente a `service_role`; as funções auxiliares ficam no schema privado. RLS não identifica o cookie da aplicação e não restringe papéis com `BYPASSRLS`, como `postgres` e `service_role`. Não exponha essas credenciais nem adicione o schema à lista de schemas públicos da Data API.
 
-Para obter `URL_SUPABASE`, abra **Connect** no painel do Supabase e copie a URI PostgreSQL do Pooler (modo Transaction para o ambiente serverless), preenchendo sua senha do banco. O ID `tndtlnmgofpzwuakvxdt` sozinho não informa o host/região do Pooler. A URL `https://tndtlnmgofpzwuakvxdt.supabase.co` não serve para esta variável. Evite definir `DATABASE_URL` na Vercel se estiver usando `URL_SUPABASE`, pois `DATABASE_URL` tem prioridade no código.
+### Ativar o acesso HTTPS no Supabase existente
+
+1. Execute **migrations/012_supabase_https.sql** no SQL Editor como `postgres`, sobre o schema existente. Em projeto novo, execute primeiro a master e depois a 012. Em schema antigo, aplique também a 010 para liberar Sobremesas. Não é necessário expor o schema `vendas_de_bolo` na Data API: a RPC fica em `public`.
+2. Na Vercel, configure `URL_SUPABASE=https://tndtlnmgofpzwuakvxdt.supabase.co`, `SERVICE_ROLE_SUPABASE` com a chave secreta do backend e mantenha `ADMIN_SESSION_SECRET`. Não use prefixo `VITE_`.
+3. Remova a antiga `DATABASE_URL` da Vercel para evitar confusão. A configuração HTTPS tem prioridade sobre ela; em caso de falha HTTPS, o backend bloqueia operações e não tenta a conexão PostgreSQL antiga.
+4. Publique o código atualizado e faça novo deploy. A migration 012 pode ser instalada antes do deploy e não remove dados/colunas. A remoção opcional da descrição (011) mantém a ordem indicada abaixo.
+
+O login continua próprio da aplicação: o backend recebe o hash do único admin pela RPC, compara a senha com scrypt e assina o cookie. Supabase Auth não é utilizado. Nenhuma senha em texto puro é enviada à Data API. Reservas, baixa de estoque e logs são gravados numa única transação da RPC, com bloqueio dos produtos na mesma ordem. Chamadas de gravação não são repetidas automaticamente em falhas de rede.
+
+O modo HTTPS exige a migration 012 e as tabelas existentes; o runtime não executa DDL pela Data API. No desenvolvimento local, deixe `URL_SUPABASE` e `SUPABASE_URL` vazias e mantenha `DATABASE_URL=postgresql://...` e `PGSCHEMA=vendas_de_bolo` no arquivo privado `local_db.env`. Esse caminho continua usando o PostgreSQL 17 local. Aliases aceitos no backend: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 Após o deploy, valide `https://SEU-DOMINIO/api/health`. O campo `database` deve indicar PostgreSQL ativo.
 

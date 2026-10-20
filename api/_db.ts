@@ -1,9 +1,11 @@
 import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
 import { Pool, PoolClient } from 'pg';
 import { AppStats, Cake, Order, OrderItem } from './_types.js';
+import { getSupabaseConfig, supabaseRpc, type SupabaseConfig } from './_supabase.js';
 
 let pgPool: Pool | null = null;
 let usePostgres = false;
+let supabaseConfig: SupabaseConfig | null = null;
 
 const cakeColumns = `
   id,
@@ -74,7 +76,26 @@ export function verifyPasswordHash(password: string, storedHash: string): boolea
 }
 
 export async function initDatabase(): Promise<{ isPostgres: boolean; message: string }> {
-  const connectionString = process.env.DATABASE_URL || process.env.URL_SUPABASE;
+  usePostgres = false;
+  supabaseConfig = null;
+  try {
+    const config = getSupabaseConfig();
+    if (config) {
+      await supabaseRpc(config, 'health');
+      if (process.env.ADMIN_INITIAL_PASSWORD) {
+        await supabaseRpc(config, 'ensure_admin', {
+          username: process.env.ADMIN_INITIAL_USER || 'Admin',
+          hash: hashPassword(process.env.ADMIN_INITIAL_PASSWORD)
+        });
+      }
+      supabaseConfig = config;
+      usePostgres = true;
+      return { isPostgres: true, message: 'Supabase conectado via HTTPS.' };
+    }
+  } catch (error) {
+    return { isPostgres: false, message: error instanceof Error ? error.message : 'Supabase HTTPS indisponível.' };
+  }
+  const connectionString = process.env.DATABASE_URL;
   const schema = process.env.PGSCHEMA || 'vendas_de_bolo';
 
   if (!/^[a-z_][a-z0-9_]*$/.test(schema)) {
@@ -88,7 +109,7 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
   if (connectionString && !/^postgres(?:ql)?:\/\//i.test(connectionString)) {
     return {
       isPostgres: false,
-      message: 'URL_SUPABASE deve conter a URI PostgreSQL do Supabase Pooler (postgresql://), não a URL HTTPS do projeto.'
+      message: 'DATABASE_URL deve conter uma URI postgresql://. Para HTTPS use URL_SUPABASE e SERVICE_ROLE_SUPABASE.'
     };
   }
 
@@ -228,6 +249,10 @@ export function isPostgresActive(): boolean {
 }
 
 export async function verifyAdminCredentials(username: string, password: string): Promise<boolean> {
+  if (supabaseConfig) {
+    const hash = await supabaseRpc<string | null>(supabaseConfig, 'admin_hash', { username });
+    return hash !== null && verifyPasswordHash(password, hash);
+  }
   const result = await requirePool().query(
     'SELECT senha_hash FROM usuarios WHERE lower(nome_usuario) = lower($1) AND ativo = TRUE LIMIT 1',
     [username]
@@ -236,6 +261,7 @@ export async function verifyAdminCredentials(username: string, password: string)
 }
 
 export async function isLoginBlocked(key: string): Promise<boolean> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'login_blocked', { key }); }
   const result = await requirePool().query(
     'SELECT bloqueado_ate > CURRENT_TIMESTAMP AS bloqueado FROM tentativas_login WHERE chave = $1',
     [key]
@@ -244,6 +270,7 @@ export async function isLoginBlocked(key: string): Promise<boolean> {
 }
 
 export async function registerLoginFailure(key: string, maxAttempts: number): Promise<void> {
+  if (supabaseConfig) { await supabaseRpc(supabaseConfig, 'login_failure', { key, maxAttempts }); return; }
   await requirePool().query(
     `INSERT INTO tentativas_login (chave, tentativas, bloqueado_ate)
      VALUES ($1, 1, NULL)
@@ -265,16 +292,19 @@ export async function registerLoginFailure(key: string, maxAttempts: number): Pr
 }
 
 export async function clearLoginFailures(key: string): Promise<void> {
+  if (supabaseConfig) { await supabaseRpc(supabaseConfig, 'login_clear', { key }); return; }
   await requirePool().query('DELETE FROM tentativas_login WHERE chave = $1', [key]);
 }
 
 export async function getAllCakes(onlyActive = false): Promise<Cake[]> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cakes', { onlyActive }); }
   const where = onlyActive ? 'WHERE ativo = TRUE' : '';
   const result = await requirePool().query(`SELECT ${cakeColumns} FROM bolos ${where} ORDER BY id`);
   return result.rows.map(mapCake);
 }
 
 export async function getCakeById(id: number): Promise<Cake | null> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cake', { id }); }
   const result = await requirePool().query(`SELECT ${cakeColumns} FROM bolos WHERE id = $1`, [id]);
   return result.rows[0] ? mapCake(result.rows[0]) : null;
 }
@@ -284,10 +314,15 @@ interface CakeImageInput {
   mimeType: string;
 }
 
+function encodeImage(image?: CakeImageInput | null) {
+  return image ? { hex: image.buffer.toString('hex'), mimeType: image.mimeType } : null;
+}
+
 export async function createCake(
   data: Omit<Cake, 'id' | 'created_at' | 'updated_at'>,
   image?: CakeImageInput | null
 ): Promise<Cake> {
+  if (supabaseConfig) return supabaseRpc(supabaseConfig, 'cake_create', { ...data, image: encodeImage(image) });
   const result = await requirePool().query(
     `INSERT INTO bolos (nome, ingredientes, categoria, preco, quantidade_disponivel, imagem_url, ativo, imagem_dados, imagem_tipo)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
@@ -308,6 +343,7 @@ export async function createCake(
 }
 
 export async function updateCake(id: number, data: Partial<Cake>, image?: CakeImageInput | null): Promise<Cake | null> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cake_update', { ...data, id, image: encodeImage(image) }); }
   const existing = await getCakeById(id);
   if (!existing) return null;
   const merged = { ...existing, ...data };
@@ -334,6 +370,10 @@ export async function updateCake(id: number, data: Partial<Cake>, image?: CakeIm
 }
 
 export async function getCakeImage(id: number): Promise<{ data: Buffer; mimeType: string } | null> {
+  if (supabaseConfig) {
+    const image = await supabaseRpc<{ hex: string; mimeType: string } | null>(supabaseConfig, 'cake_image', { id });
+    return image ? { data: Buffer.from(image.hex, 'hex'), mimeType: image.mimeType } : null;
+  }
   const result = await requirePool().query(
     'SELECT imagem_dados, imagem_tipo FROM bolos WHERE id = $1 AND imagem_dados IS NOT NULL',
     [id]
@@ -346,6 +386,7 @@ export async function getCakeImage(id: number): Promise<{ data: Buffer; mimeType
 }
 
 export async function updateStock(id: number, newStock: number, reason: string, notes?: string): Promise<Cake | null> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'stock', { id, newStock, reason, notes }); }
   const pool = requirePool();
   const client = await pool.connect();
   try {
@@ -378,6 +419,7 @@ export async function updateStock(id: number, newStock: number, reason: string, 
 }
 
 export async function deleteCake(id: number): Promise<boolean> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cake_delete', { id }); }
   const result = await requirePool().query(
     'UPDATE bolos SET ativo = FALSE, atualizado_em = CURRENT_TIMESTAMP WHERE id = $1',
     [id]
@@ -394,6 +436,7 @@ export async function createOrder(data: {
   payment_method: 'pix' | 'credito';
   items: { cake_id: number; quantity: number }[];
 }): Promise<{ order: Order; success: boolean; error?: string }> {
+  if (supabaseConfig) return supabaseRpc(supabaseConfig, 'order_create', data);
   const quantities = new Map<number, number>();
   for (const item of data.items) {
     if (!Number.isInteger(item.cake_id) || !Number.isInteger(item.quantity) || item.quantity <= 0) {
@@ -477,6 +520,7 @@ export async function createOrder(data: {
 }
 
 export async function updateTelegramDelivery(orderId: number, sent: boolean, errorMessage = ''): Promise<void> {
+  if (supabaseConfig) { await supabaseRpc(supabaseConfig, 'telegram', { orderId, sent, errorMessage }); return; }
   const pool = requirePool();
   await pool.query(
     `UPDATE pedidos SET telegram_enviado = $1, telegram_erro = $2, atualizado_em = CURRENT_TIMESTAMP WHERE id = $3`,
@@ -491,6 +535,7 @@ export async function updateTelegramDelivery(orderId: number, sent: boolean, err
 export type OrderPeriod = 'today' | `month-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12}` | 'all';
 
 export async function getAllOrders(period: OrderPeriod = 'all'): Promise<Order[]> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'orders', { period }); }
   const brasiliaToday = `(CURRENT_TIMESTAMP AT TIME ZONE 'America/Sao_Paulo')::date`;
   const brasiliaDayStart = `(${brasiliaToday} AT TIME ZONE 'America/Sao_Paulo')`;
   const where = period === 'today'
@@ -530,11 +575,13 @@ export async function getAllOrders(period: OrderPeriod = 'all'): Promise<Order[]
 }
 
 export async function deleteOrder(id: number): Promise<boolean> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'order_delete', { id }); }
   const result = await requirePool().query('DELETE FROM pedidos WHERE id = $1', [id]);
   return (result.rowCount || 0) > 0;
 }
 
 export async function updateOrderStatus(id: number, status: Order['status']): Promise<Order | null> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'order_status', { id, status }); }
   const result = await requirePool().query(
     `UPDATE pedidos SET status = $1, atualizado_em = CURRENT_TIMESTAMP WHERE id = $2 RETURNING ${orderColumns}`,
     [status, id]
@@ -565,6 +612,7 @@ export interface AnnualSalesStats {
 }
 
 export async function getAnnualSalesStats(year: number): Promise<AnnualSalesStats> {
+  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'annual', { year }); }
   const pool = requirePool();
   const monthsResult = await pool.query(
     `SELECT EXTRACT(MONTH FROM criado_em)::int AS month,
