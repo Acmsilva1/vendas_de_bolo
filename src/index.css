@@ -80,10 +80,6 @@ select,
     display: none;
   }
 
-  .mobile-checkout-details {
-    padding-bottom: 5rem;
-  }
-
   .mobile-checkout-details label,
   .admin-dashboard label {
     font-size: 14px;

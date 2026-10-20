@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem, Order } from '../types';
+import { pendingOrderKey, clearPendingOrder } from '../orderRequest';
+import { createOrderPdf } from '../orderPdf';
 import { X, Send, ShoppingCart, Trash2, CheckCircle, MapPin, Phone, User, FileText, Download, CreditCard, Copy, Minus, Plus, ArrowLeft } from 'lucide-react';
 
 interface OrderModalProps {
@@ -65,6 +67,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   const [errorMessage, setErrorMessage] = useState('');
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
   const [mobileStep, setMobileStep] = useState<1 | 2>(1);
+  const requestRef = useRef<{ payload: string; key: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -178,10 +181,16 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         }))
       };
 
+      const body = JSON.stringify(payload);
+      if (requestRef.current?.payload !== body) {
+        const key = await pendingOrderKey(body);
+        requestRef.current = { payload: body, key };
+      }
+      const key = requestRef.current.key;
       const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        body
       });
 
       const data = await res.json();
@@ -190,6 +199,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         throw new Error(data.error || 'Falha ao registrar pedido.');
       }
 
+      requestRef.current = null;
+      clearPendingOrder();
       setSubmittedOrder(data.order);
       onOrderSuccess(data.order);
     } catch (err: unknown) {
@@ -211,79 +222,18 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   const handleDownloadPdf = () => {
     if (!submittedOrder) return;
 
-    const normalizePdfText = (value: string) =>
-      value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '');
-    const escapePdfText = (value: string) => normalizePdfText(value).replace(/([\\()])/g, '\\$1');
-    const itemLines = submittedOrder.items.map(item =>
-      `• ${item.quantity}x ${item.cake_name}  |  R$ ${item.subtotal.toFixed(2).replace('.', ',')}`
-    );
-    const content = [
-      'q',
-      '0.99 0.94 0.97 rg',
-      '0 0 612 792 re f',
-      'Q',
-      '0.74 0.09 0.36 rg',
-      '50 690 512 1 re f',
-      'BT',
-      '/F1 24 Tf',
-      '50 735 Td',
-      `(${escapePdfText('Sua reserva de itens')}) Tj`,
-      '/F1 12 Tf',
-      '0 -28 Td',
-      '0.28 0.33 0.41 rg',
-      `(${escapePdfText('Obrigada por escolher a Delicias da Ju!')}) Tj`,
-      '/F1 13 Tf',
-      '0 -70 Td',
-      '0.74 0.09 0.36 rg',
-      `(${escapePdfText('O que voce escolheu')}) Tj`,
-      '/F1 11 Tf',
-      '0 -30 Td',
-      '0.20 0.25 0.32 rg',
-      ...itemLines.map(line => `0 -24 Td (${escapePdfText(line)}) Tj`),
-      '0 -48 Td',
-      '0.74 0.09 0.36 rg',
-      '/F1 16 Tf',
-      `(${escapePdfText(`Total da reserva: R$ ${submittedOrder.total_amount.toFixed(2).replace('.', ',')}`)}) Tj`,
-      '/F1 11 Tf',
-      '0 -42 Td',
-      '0.28 0.33 0.41 rg',
-      `(${escapePdfText(`Forma de pagamento: ${submittedOrder.payment_method === 'pix' ? 'PIX' : 'Credito - aproximacao na entrega'}`)}) Tj`,
-      '0 -28 Td',
-      `(${escapePdfText('Em breve, falaremos com voce pelo WhatsApp para combinar a entrega.')}) Tj`,
-      '0 -24 Td',
-      `(${escapePdfText('Guarde este arquivo como lembrete da sua reserva.')}) Tj`,
-      'ET'
-    ].join('\n');
-    const objects = [
-      '<< /Type /Catalog /Pages 2 0 R >>',
-      '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
-      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>',
-      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
-      `<< /Length ${content.length} >>\nstream\n${content}\nendstream`
-    ];
-    let pdf = '%PDF-1.4\n';
-    const offsets = [0];
-    objects.forEach((object, index) => {
-      offsets.push(pdf.length);
-      pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
-    });
-    const xrefOffset = pdf.length;
-    pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-    offsets.slice(1).forEach(offset => {
-      pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
-    });
-    pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-    const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+    const url = URL.createObjectURL(new Blob([createOrderPdf(submittedOrder)], { type: 'application/pdf' }));
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'pedido-delicias-da-ju.pdf';
+    link.download = `reserva-${submittedOrder.order_code.replace(/[^a-zA-Z0-9_-]/g, '') || submittedOrder.id}-delicias-da-ju.pdf`;
+    document.body.appendChild(link);
     link.click();
-    URL.revokeObjectURL(url);
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-violet-950/35 sm:backdrop-blur-sm sm:overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-violet-950/35 sm:backdrop-blur-sm">
       <motion.div
         ref={dialogRef}
         initial={{ opacity: 0, scale: 0.95, y: 15 }}
@@ -292,10 +242,10 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="order-modal-title"
-        className="flex h-[100dvh] w-full flex-col bg-white text-slate-900 overflow-hidden sm:block sm:h-auto sm:max-w-lg sm:border sm:border-violet-100 sm:rounded-2xl sm:shadow-2xl sm:my-6"
+        className="flex max-h-[94dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-violet-100 bg-white text-slate-900 shadow-2xl"
       >
         {/* Cabeçalho do Modal */}
-        <div className="flex items-center justify-between p-3 sm:p-5 border-b border-violet-100 bg-rose-50/60">
+        <div className="flex items-center justify-between shrink-0 p-3 sm:px-4 border-b border-violet-100 bg-rose-50/60">
           <div className="flex items-center space-x-2.5">
             <div className="p-2 rounded-xl bg-pink-500/20 text-pink-600 border border-pink-400/30">
               <ShoppingCart className="w-5 h-5" />
@@ -324,7 +274,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         </div>
 
         {!submittedOrder && cart.length > 0 && (
-          <div className="flex items-center gap-2 border-b border-violet-100 px-4 py-2 text-sm sm:hidden" aria-label={`Etapa ${mobileStep} de 2`}>
+          <div className="flex items-center gap-2 border-b border-violet-100 px-4 py-2 text-xs" aria-label={`Etapa ${mobileStep} de 2`}>
             <span className={`h-2 flex-1 rounded-full ${mobileStep >= 1 ? 'bg-pink-600' : 'bg-violet-100'}`} />
             <span className={`h-2 flex-1 rounded-full ${mobileStep >= 2 ? 'bg-pink-600' : 'bg-violet-100'}`} />
             <span className="ml-1 font-semibold text-slate-700">{mobileStep}/2</span>
@@ -332,7 +282,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         )}
 
         {/* Corpo do Modal */}
-        <div className="flex-1 overflow-y-auto p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:block sm:overflow-visible sm:p-5">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-4">
           {/* Tela de sucesso da reserva */}
           {submittedOrder ? (
             <div className="space-y-5 text-center">
@@ -376,8 +326,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   </div>
                 ) : (
                   <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 p-3 text-xs text-sky-800">
-                    <p className="font-semibold">Pagamento no crédito</p>
-                    <p className="mt-1">O pagamento será feito por aproximação no ato da entrega.</p>
+                    <p className="font-semibold">Pagamento no crédito/débito</p>
+                    <p className="mt-1">Crédito ou débito por aproximação na entrega.</p>
                   </div>
                 )}
               </div>
@@ -393,9 +343,9 @@ export const OrderModal: React.FC<OrderModalProps> = ({
             </div>
           ) : (
             /* Formulário de Pedido */
-            <form onSubmit={handleSubmitOrder} className="space-y-5">
+            <form id="checkout-order-form" onSubmit={handleSubmitOrder} className="space-y-3">
               {/* Lista de Itens no Carrinho */}
-              <div className={mobileStep === 1 ? 'block' : 'hidden sm:block'}>
+              <div className={mobileStep === 1 ? 'block' : 'hidden'}>
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2.5">
                   <span className="flex items-center gap-2">
                     <ShoppingCart className="w-4 h-4 text-pink-600" />
@@ -411,17 +361,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                     <p className="mt-3 rounded-xl bg-white/80 px-3 py-2 text-xs font-medium text-pink-700">{emptyCartTip}</p>
                   </div>
                 ) : (
-                <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
+                <div className="space-y-1.5 max-h-[32dvh] overflow-y-auto overscroll-contain pr-1">
                   {cart.map(item => (
                     <div
                       key={item.cake.id}
-                      className="mobile-cart-item relative flex items-center justify-between p-2.5 rounded-xl bg-violet-50/60 border border-violet-200/60"
+                      className="mobile-cart-item relative flex items-center justify-between p-2 rounded-xl bg-violet-50/60 border border-violet-200/60"
                     >
                       <div className="mobile-cart-info flex items-center space-x-2.5 overflow-hidden">
                         <img
                           src={item.cake.image_url || '/assets/cake-card.svg'}
                           alt={item.cake.name}
-                          className="w-10 h-10 rounded-lg object-cover flex-shrink-0"
+                          className="w-9 h-9 rounded-lg object-cover flex-shrink-0"
                           referrerPolicy="no-referrer"
                           loading="lazy"
                           decoding="async"
@@ -430,7 +380,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                           <p className="text-xs font-semibold text-slate-800 truncate">
                             {item.cake.name}
                           </p>
-                          <p className="text-sm sm:text-[11px] text-slate-600">
+                          <p className="text-xs text-slate-600">
                             {item.quantity}x • R$ {item.cake.price.toFixed(2).replace('.', ',')}
                           </p>
                           <div className="mt-1 flex items-center gap-1 sm:hidden" aria-label={`Quantidade de ${item.cake.name}`}>
@@ -439,7 +389,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                               onClick={() => onUpdateQuantity(item.cake.id, item.quantity - 1)}
                               disabled={item.quantity <= 1}
                               aria-label={`Diminuir quantidade de ${item.cake.name}`}
-                              className="min-h-11 min-w-11 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
+                              className="h-9 w-9 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
                             >
                               <Minus className="mx-auto h-4 w-4" />
                             </button>
@@ -449,7 +399,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                               onClick={() => onUpdateQuantity(item.cake.id, item.quantity + 1)}
                               disabled={item.quantity >= item.cake.stock_quantity}
                               aria-label={`Aumentar quantidade de ${item.cake.name}`}
-                              className="min-h-11 min-w-11 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
+                              className="h-9 w-9 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
                             >
                               <Plus className="mx-auto h-4 w-4" />
                             </button>
@@ -485,7 +435,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setMobileStep(2)}
-                    className="mt-4 min-h-11 w-full rounded-xl bg-pink-600 px-4 py-3 text-base font-semibold text-white sm:hidden"
+                    className="mt-3 min-h-10 w-full rounded-xl bg-pink-600 px-4 py-2.5 text-sm font-semibold text-white"
                   >
                     Continuar para entrega
                   </button>
@@ -493,16 +443,17 @@ export const OrderModal: React.FC<OrderModalProps> = ({
               </div>
 
               {cart.length > 0 && (
-                <div className={`mobile-checkout-details ${mobileStep === 2 ? 'space-y-4' : 'hidden'} sm:contents`}>
+                <div className={`mobile-checkout-details ${mobileStep === 2 ? 'space-y-3' : 'hidden'}`}>
                   <button
                     type="button"
                     onClick={() => setMobileStep(1)}
-                    className="flex min-h-11 items-center gap-2 text-sm font-semibold text-pink-700 sm:hidden"
+                    className="flex min-h-9 items-center gap-2 text-xs font-semibold text-pink-700"
                   >
                     <ArrowLeft className="h-4 w-4" />
                     Voltar para a sacola
                   </button>
-                  <div className="rounded-xl border border-pink-100 bg-pink-50/50 p-3">
+                  <p className="text-right text-sm font-semibold text-pink-700 -mt-9 mb-3 pointer-events-none">Total: R$ {totalAmount.toFixed(2).replace('.', ',')}</p>
+                  <div className="rounded-xl border border-pink-100 bg-pink-50/50 p-2.5">
                     <label className="block text-xs text-slate-700 mb-1 flex items-center space-x-1.5">
                       <CreditCard className="w-3 h-3 text-pink-600" />
                       <span>Forma de pagamento *</span>
@@ -515,15 +466,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                           setPaymentMethod(e.target.value);
                         }
                       }}
-                      className="w-full min-h-11 sm:min-h-0 px-3 py-2 rounded-xl bg-white border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
+                      className="w-full min-h-10 px-3 py-2 rounded-lg bg-white border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
                     >
-                      <option value="credito">CRÉDITO — aproximação na entrega</option>
+                      <option value="credito">Crédito/débito</option>
                       <option value="pix">PIX — pagar antes da entrega</option>
                     </select>
                     <p className="mt-1 text-sm sm:text-[11px] text-slate-500">
                       {paymentMethod === 'pix'
                         ? 'Após enviar, você receberá o código PIX para copiar e pagar.'
-                        : 'O pagamento será feito por aproximação no ato da entrega.'}
+                        : 'Por aproximação, no ato da entrega.'}
                     </p>
                   </div>
 
@@ -535,11 +486,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   )}
 
                   {/* Dados do Cliente (Em conformidade com a LGPD: estritamente mínimos) */}
-                  <div className="space-y-3 pt-2 border-t border-violet-100">
+                  <div className="space-y-2.5 pt-2 border-t border-violet-100">
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
                   Dados para Confirmação e Entrega
                 </h3>
 
+<div className="grid gap-2.5 sm:grid-cols-2">
                 <div>
                   <label className="block text-xs text-slate-700 mb-1 flex items-center space-x-1.5">
                     <User className="w-3 h-3 text-pink-600" />
@@ -552,7 +504,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                     value={customerName}
                     onChange={e => setCustomerName(e.target.value)}
                     placeholder="Ex: Maria Oliveira"
-                    className="w-full min-h-11 sm:min-h-0 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
+                    className="w-full min-h-10 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
                   />
                 </div>
 
@@ -568,10 +520,11 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                     value={customerPhone}
                     onChange={e => setCustomerPhone(e.target.value)}
                     placeholder="(27) 99999-9999"
-                    className="w-full min-h-11 sm:min-h-0 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
+                    className="w-full min-h-10 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
                   />
                 </div>
 
+                </div>
                 <div>
                   <label className="block text-xs text-slate-700 mb-1 flex items-center space-x-1.5">
                     <MapPin className="w-3 h-3 text-pink-600" />
@@ -583,7 +536,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                       value={deliveryBlock}
                       onChange={e => setDeliveryBlock(e.target.value)}
                       aria-label="Bloco"
-                      className="w-full min-h-11 sm:min-h-0 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
+                      className="w-full min-h-10 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
                     >
                       <option value="">Bloco</option>
                       {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'].map(block => (
@@ -600,50 +553,36 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                       onChange={e => setDeliveryApartment(e.target.value)}
                       placeholder="APT"
                       aria-label="Apartamento"
-                      className="w-full min-h-11 sm:min-h-0 px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
+                      className="w-full min-h-10 px-3 py-2 rounded-lg bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400"
                     />
                   </div>
                 </div>
 
-                <div>
-                  <label className="block text-xs text-slate-700 mb-1 flex items-center space-x-1.5">
-                    <FileText className="w-3 h-3 text-pink-600" />
-                    <span>Observações (opcional)</span>
-                  </label>
-                  <textarea
-                    rows={2}
-                    maxLength={250}
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                    placeholder="Ex: Embalagem para presente, recado especial, etc."
-                    className="w-full px-3 py-2 rounded-xl bg-violet-50 border border-violet-200 text-slate-900 text-base sm:text-xs focus:outline-none focus:border-pink-400 resize-none"
-                  />
-                </div>
+                <details className="rounded-lg border border-violet-100 bg-violet-50/40 p-2.5">
+                  <summary className="cursor-pointer text-xs font-medium text-slate-700">Observações (opcional)</summary>
+                  <label className="sr-only" htmlFor="checkout-notes">Observações do pedido</label>
+                  <textarea id="checkout-notes" rows={2} maxLength={250} value={notes}
+                    onChange={e => setNotes(e.target.value)} placeholder="Recado ou orientação para entrega"
+                    className="mt-2 w-full resize-none rounded-lg border border-violet-200 bg-white p-2 text-base sm:text-xs" />
+                </details>
                   </div>
 
-                  {/* Botão de Envio */}
-                  <p className="text-xs text-slate-600 text-center sm:hidden">
-                    🔒 Seus dados serão utilizados exclusivamente para a confirmação deste pedido.
-                  </p>
-                  <div className="fixed bottom-0 left-0 right-0 z-10 border-t border-violet-100 bg-white px-4 pb-[calc(.75rem+env(safe-area-inset-bottom))] pt-3 sm:static sm:border-t sm:border-violet-100 sm:p-0 sm:pt-3">
-                <button
-                  type="submit"
-                  id="btn-confirm-order-submit"
-                  disabled={isLoading || cart.length === 0}
-                  className="w-full py-3 px-4 rounded-xl bg-pink-600 hover:bg-pink-500 active:scale-98 disabled:opacity-50 text-white font-semibold text-sm transition-all flex items-center justify-center space-x-2 shadow-lg cursor-pointer"
-                >
-                  <Send className="w-4 h-4 text-sky-200" />
-                  <span>{isLoading ? 'Confirmando reserva...' : 'Confirmar reserva'}</span>
-                </button>
-                <p className="hidden text-[11px] text-slate-600 text-center mt-2 sm:block">
-                  🔒 Seus dados serão utilizados exclusivamente para a confirmação deste pedido.
-                </p>
-                  </div>
+
                 </div>
               )}
             </form>
           )}
         </div>
+        {!submittedOrder && cart.length > 0 && mobileStep === 2 && (
+          <div className="shrink-0 border-t border-violet-100 bg-white px-3 pt-2 pb-[max(.625rem,env(safe-area-inset-bottom))] sm:px-4">
+            <button type="submit" form="checkout-order-form" id="btn-confirm-order-submit" disabled={isLoading}
+              className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-pink-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-pink-500 disabled:opacity-50">
+              <Send className="h-4 w-4" />
+              {isLoading ? 'Confirmando reserva...' : 'Confirmar reserva'}
+            </button>
+            <p className="mt-1.5 text-center text-[10px] text-slate-500">Seus dados são usados apenas para confirmar e entregar este pedido.</p>
+          </div>
+        )}
       </motion.div>
     </div>
   );

@@ -92,6 +92,10 @@ ALTER TABLE pedidos DROP CONSTRAINT IF EXISTS pedidos_forma_pagamento_check;
 ALTER TABLE pedidos ADD CONSTRAINT pedidos_forma_pagamento_check
   CHECK (forma_pagamento IN ('pix', 'credito'));
 
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS idempotencia_chave VARCHAR(128);
+ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS idempotencia_hash VARCHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_idempotencia ON pedidos(idempotencia_chave) WHERE idempotencia_chave IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_bolos_ativos ON bolos(ativo);
 CREATE INDEX IF NOT EXISTS idx_bolos_quantidade ON bolos(quantidade_disponivel);
 CREATE INDEX IF NOT EXISTS idx_pedidos_criado_em ON pedidos(criado_em DESC);

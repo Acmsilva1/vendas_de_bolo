@@ -790,7 +790,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <p>Bloco {order.delivery_block}</p>
                           <p className="mt-1 text-[11px] text-slate-500">APT {order.delivery_apartment}</p>
                         </div>
-                        <span className="font-semibold text-emerald-700">{order.payment_method === 'pix' ? 'PIX' : 'CRÉDITO'}</span>
+                        <span className="font-semibold text-emerald-700">{order.payment_method === 'pix' ? 'PIX' : 'CRÉDITO/DÉBITO'}</span>
                         <div className="text-[11px] text-slate-700">
                           {order.items.map(item => `${item.quantity}x ${item.cake_name}`).join(', ')}
                         </div>
@@ -870,7 +870,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
                           <p>Bloco {order.delivery_block}</p>
                           <p className="mt-1 text-[11px] text-slate-500">APT {order.delivery_apartment}</p>
                         </div>
-                        <span className="font-semibold text-emerald-700">{order.payment_method === 'pix' ? 'PIX' : 'CRÉDITO'}</span>
+                        <span className="font-semibold text-emerald-700">{order.payment_method === 'pix' ? 'PIX' : 'CRÉDITO/DÉBITO'}</span>
                         <div>
                           <p className="font-bold text-emerald-600">R$ {order.total_amount.toFixed(2).replace('.', ',')}</p>
                           <p className="mt-1 text-[11px] text-slate-500">{order.items.map(item => `${item.quantity}x ${item.cake_name}`).join(', ')}</p>

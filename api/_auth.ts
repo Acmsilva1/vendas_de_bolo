@@ -21,8 +21,9 @@ export function createSessionToken(username: string, secret: string, ttlSeconds:
 }
 
 export function verifySessionToken(token: string, secret: string, now = Date.now()): SessionPayload | null {
-  const [encoded, suppliedSignature, extra] = token.split('.');
-  if (!encoded || !suppliedSignature || extra) return null;
+  const parts = token.split('.');
+  const [encoded, suppliedSignature] = parts;
+  if (parts.length !== 2 || !encoded || !suppliedSignature || token.length > 2048) return null;
 
   const expectedSignature = signature(encoded, secret);
   const supplied = Buffer.from(suppliedSignature);
@@ -31,7 +32,7 @@ export function verifySessionToken(token: string, secret: string, now = Date.now
 
   try {
     const payload = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as SessionPayload;
-    if (!payload.sub || !Number.isInteger(payload.exp) || payload.exp <= Math.floor(now / 1000)) return null;
+    if (typeof payload.sub !== 'string' || !payload.sub || !Number.isInteger(payload.exp) || payload.exp <= Math.floor(now / 1000)) return null;
     return payload;
   } catch {
     return null;
@@ -42,7 +43,9 @@ export function readCookie(cookieHeader: string | undefined, name: string): stri
   if (!cookieHeader) return '';
   for (const part of cookieHeader.split(';')) {
     const [key, ...value] = part.trim().split('=');
-    if (key === name) return decodeURIComponent(value.join('='));
+    if (key === name) {
+      try { return decodeURIComponent(value.join('=')); } catch { return ''; }
+    }
   }
   return '';
 }

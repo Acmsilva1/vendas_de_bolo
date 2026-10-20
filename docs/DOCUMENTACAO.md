@@ -333,3 +333,78 @@ Validações: 13 testes unitários com HTTP simulado aprovados, TypeScript, buil
 Gitleaks sem achados nos arquivos de código/configuração alterados; varredura da pasta também identificou credenciais apenas nos arquivos privados local_db.env e token_telegram_vendas.env, cujo ignore foi confirmado. Opengrep não disponível. README e .env.example atualizados com configuração e ordem de ativação. Checkpoint: base Git e3a48cc; sem commit, push, alteração de variável, migration remota ou deploy. Para ativar: executar 012 no Supabase, configurar URL_SUPABASE HTTPS e SERVICE_ROLE_SUPABASE no backend Vercel, manter ADMIN_SESSION_SECRET e publicar o código com novo deploy. DATABASE_URL não é necessária na Vercel nesse modo.
 
 Rechecagem em 2026-10-20 após relato do usuário: /api/health e /api/cakes do domínio publicado retornaram 503 com a mensagem antiga que exige URI PostgreSQL. Essa mensagem não existe mais no código local ajustado; HEAD continua em e3a48cc, com transporte HTTPS e migration 012 ainda sem commit/push. Portanto o deployment continua executando o backend anterior, e repetir redeploy desse código não inclui as alterações locais. Nenhuma nova troca de credenciais é indicada por esse erro. Publicação pendente de autorização para commit/push e consequente deploy de produção; status da migration remota não verificado.
+
+### Revisão de bugs e segurança — 2026-10-20
+
+Escopo autorizado: testes locais e PostgreSQL local isolado, sem requisições a produção, Supabase real ou Telegram. Código funcional não alterado nesta revisão. Durante a execução foi observado HEAD 1c35d1a (correção do bug), criado externamente ao agente; nenhum commit, push ou deploy foi executado por esta revisão. O estado de publicação não foi consultado.
+
+Evidências e limites:
+
+- npm test: 13 testes aprovados; npm run lint aprovado.
+- Harness HTTP local com Data API/Telegram simulados: 16 verificações positivas e 10 divergências de comportamento. Cookie administrativo obtido pelo login do próprio servidor de teste; a primeira rodada com cookie sintético foi descartada para as verificações autenticadas. Artefatos privados ignorados: .local/security-http.ts e .local/security-http-results.json.
+- Teste separado de indisponibilidade inicial: primeira e segunda respostas 503, mas apenas uma tentativa de inicialização; transporte simulado voltaria a funcionar na segunda chamada. Reprodução em .local/security-init-cache.ts.
+- Migration 012 e operações SQL reais aprovadas no PostgreSQL 17 em schema isolado e transação revertida: cadastro, edição, imagens, estoque, logs, pedidos com itens repetidos, estoque insuficiente, pedido inválido, períodos, dashboard, hash administrativo e rate limit. RPC negada a anon/authenticated/papel sem grant e permitida a service_role. Nenhum dado cadastrado foi alterado. Não simula o gateway PostgREST nem testa concorrência entre conexões distintas.
+- Gitleaks no histórico analisado: nenhum achado. Arquivos privados e .local permanecem ignorados. Nenhum hash/senha/token real foi exibido. Opengrep/Semgrep/ZAP indisponíveis; não houve SAST/DAST automatizado completo. Revisão manual e sondagens HTTP locais não equivalem a auditoria exaustiva.
+
+Achados reproduzidos ou verificados no código, ainda sem correção:
+
+| Prioridade | Achado | Evidência / efeito | Correção indicada |
+| --- | --- | --- | --- |
+| Alta | Erro depois do pedido persistido | api/index.ts aguarda updateTelegramDelivery após criar o pedido. Falha simulada nessa RPC devolveu 500 depois do commit da reserva; cliente pode tentar de novo e duplicar pedido/baixa. | Separar confirmação do pedido de falhas de notificação/auditoria e adicionar idempotência na criação. |
+| Alta | Inicialização falha fica retida | databaseInitialization armazena promessa resolvida com isPostgres=false; não limpa cache nesse ramo. Segunda requisição continuou 503 sem nova tentativa. | Liberar nova tentativa com controle de concorrência/backoff, preservando bloqueio de gravações enquanto indisponível. |
+| Média | Validação de pedidos converte entradas inválidas | quantity=-5 foi convertido em 1 e pedido retornou 201; item null retornou 500. | Exigir objeto, ID inteiro positivo e quantidade inteira positiva com limites, sem conversão silenciosa. |
+| Média | Validação administrativa insuficiente | Preço negativo/não finito alcança a Data API; resposta de constraint simulada resulta em 500. Estoque negativo foi aceito e encaminhado, em vez de rejeitado. Boolean('false') resulta em true. | Validar tipos, finitude, faixa de preço/estoque e boolean estrito antes da persistência. Não foi demonstrada gravação de preço negativo; o banco possui constraint. |
+| Média | Desativação não impede consulta pública individual | GET /cakes/2 e /cakes/2/image retornaram 200 para fixture inativa sem sessão. Listagem pública já filtra ativos. | Exigir item ativo nas rotas públicas; permitir consulta de inativo apenas ao admin. |
+| Média, condicional | Hash scrypt malformado pode aceitar qualquer senha | verifyPasswordHash aceitou formato scrypt com parte hexadecimal inválida que decodifica para buffer vazio, comparando dois buffers de tamanho zero. Não é bypass demonstrado no banco real. Consulta local mostrou 1 admin e 0 hashes malformados; remoto não consultado. | Exigir algoritmo, quantidade de partes, salt e hash hexadecimal com comprimento esperado; rejeitar formato inválido antes do scrypt. |
+| Baixa | Cookie malformado causa 500 | decodeURIComponent sem tratamento lança URIError; /auth/session com cookie inválido devolveu 500. | Tratar cookie inválido como ausência de sessão. |
+| Baixa | IDs parcialmente numéricos são aceitos | GET /cakes/1abc retornou o item 1. Outros handlers também usam parseInt sem validar o caminho inteiro. | Validar string decimal completa, inteiro positivo e limite do banco. |
+| Risco por revisão | Ausência de limite na criação pública de pedidos | POST /orders não possui middleware de rate limit, idempotência ou outro controle de repetição; abuso pode criar reservas e consumir estoque. Não foi feita carga/negação de serviço. | Limite persistente por origem/cliente e chave idempotente; definir limites compatíveis com o uso. |
+| Risco por revisão | Orçamento de tempo da Vercel | maxDuration=15 s coincide com o timeout de uma única RPC (15 s); uma requisição pode executar várias RPCs e notificação Telegram de até 10 s. Não houve teste de tempo na Vercel. | Definir orçamento de tempo da requisição e desacoplar notificação, evitando resposta ambígua após commit. |
+
+Dependências: npm audit --omit=dev detectou proxy-addr 2.0.7 (alerta crítico, GHSA-jqcg-44mw-7w3h, corrigido em 2.0.8) e source-map-js 1.2.1 (alerta alto, GHSA-68fv-2mgg-jv7q, corrigido em 1.2.2). Versões confirmadas por npm ls. A configuração atual usa trust proxy numérico (1), não as sub-redes IPv6 descritas no advisory de proxy-addr; exploração desse CVE no app não foi demonstrada. source-map-js chega por ferramentas CSS/build; não foi identificado endpoint de produção aceitando source maps externos. Atualizar de forma controlada e repetir testes, sem npm audit fix --force automático. Fontes: https://github.com/advisories/GHSA-jqcg-44mw-7w3h e https://github.com/advisories/GHSA-68fv-2mgg-jv7q.
+
+Controles aprovados nas sondagens: nove rotas administrativas negaram chamadas sem sessão; cookie forjado foi negado; sessão válida acessou pedidos; escrita administrativa sem origem ou com origem externa foi negada; login com origem externa negado; cookie de login apresentou HttpOnly, Secure, SameSite=Strict e prefixo __Host-. Chave privilegiada permanece no backend, e chamadas HTTPS não repetem gravações automaticamente.
+
+Checkpoint: revisão local concluída sobre os arquivos agora presentes em 1c35d1a. Achados pendentes, sem mudanças funcionais, atualização de dependências, commit/push ou deploy pelo agente. Corrigir problemas de pedido/autenticação defensiva/recuperação e atualizar dependências antes de publicar a próxima versão.
+
+
+### Correções e reteste em paralelo — 2026-10-20
+
+Por solicitação de André, corrigidos os achados anteriores e repetidas as validações. Dois agentes atuaram em paralelo após autorização explícita: um implementou/conferiu o PDF; outro revisou as correções de segurança. O agente principal integrou e testou. Produção, Supabase real e Telegram não foram acessados ou modificados.
+
+Correções aplicadas:
+
+- Verificação scrypt rejeita hashes com partes extras, salt vazio/excessivo ou hash hexadecimal diferente de 64 bytes; cookie malformado vira ausência de sessão e token com partes extras é negado.
+- IDs devem ser inteiros positivos completos e dentro do limite PostgreSQL. Preços/estoques rejeitam vazio, null, booleanos, não finitos, negativos e limites excessivos; quantidade exige inteiro positivo e soma por produto limitada. Estado ativo aceita booleano estrito e nome em branco é recusado. Produtos/imagens inativos não são retornados por rotas públicas; imagem usa no-store para reavaliar permissão.
+- Pedidos exigem Idempotency-Key e persistem chave/hash com índice único. A mesma chave/conteúdo devolve o pedido existente sem nova baixa; conteúdo diferente recebe 409. Chaves concorrentes iguais são serializadas por advisory lock. O frontend retém somente digest e chave aleatória no sessionStorage, sem nome/telefone/endereço, e conserva a intenção em erros/reload. Confirmação bem-sucedida libera uma nova intenção.
+- Limite persistente de 20 novas tentativas válidas de pedido por IP/janela fixa de 15 min, com HMAC do IP. Repetições idempotentes não consomem o limite; excesso recebe 429. Falhas na atualização da notificação são registradas sem devolver erro de pedido já confirmado. Não foram introduzidas retentativas automáticas de gravação.
+- Inicialização compartilha tentativas e volta a tentar após 1s de falha. server.ts e API Vercel agora usam o mesmo middleware, evitando health 200 sem inicialização e a necessidade de reiniciar por falha inicial. HTTPS timeout 5s, Telegram 3s e orçamento Vercel 60s; idempotência protege a repetição após resposta perdida.
+- A revisão independente encontrou ainda o teto de NUMERIC(10,2): pg e RPC agora rejeitam total acima de 99.999.999,99 antes de inserir/baixar estoque. Produtos ficam bloqueados na mesma ordem na RPC; cálculo preliminar usa numeric sem limite. O contador de tentativas é preservado no retorno de erro de negócio.
+- proxy-addr atualizado 2.0.7→2.0.8 e source-map-js 1.2.1→1.2.2 via overrides e lockfile, sem instalação de scripts. npm audit completo retornou zero alertas conhecidos.
+
+Migration nova: 013_pedidos_seguros.sql, após 012, adiciona duas colunas de idempotência e índice aos pedidos, move a função base para schema privado e publica wrapper protegido. Função base não é executável diretamente por service_role, anon ou authenticated; somente o wrapper é concedido ao backend. Operações existentes permanecem disponíveis e as tabelas/RLS não são abertas. A migration é reaplicável e não remove dados. Runtime HTTPS exige health version 13 para não aceitar silenciosamente RPC antiga sem proteções. Não reaplicar 012 depois 013. Master e runtime local incluem colunas para o caminho pg direto.
+
+Validação local: 27 testes da suíte integrada aprovados, incluindo regressões HTTP para todos os casos antes divergentes, middleware de disponibilidade, acentos/paginação PDF, chave persistida sem dados pessoais e saudação. TypeScript e build completo frontend/Express aprovados. O teste de indisponibilidade com transporte simulado passou de 503 na primeira chamada para 200 após recuperação, com duas inicializações. Revisão paralela dos dois últimos ajustes não encontrou novo problema concreto.
+
+SQL real autorizado: .local/verify-security-final.mjs validou master+012+013 e reaplicação 013 em schema isolado do PostgreSQL 17, com rollback geral; testou CRUD/imagem, pedidos/estoque/logs, filtros/dashboard/login, replay sem nova baixa, conflito 409, limite 429 e teto monetário 400 sem baixa. Caminhos RPC e repositório pg direto passaram. anon/authenticated/papel sem grant foram negados; service_role executou wrapper e ficou sem execute na função base. Não houve escrita permanente nos registros locais. Não foi validado gateway real PostgREST, implantação ou contenção entre conexões distintas.
+
+### Saudação WhatsApp e PDF da reserva — 2026-10-20
+
+A saudação já consultava São Paulo; o defeito visual era a lua fixa. api/_greeting.ts agora combina texto e ícone no momento do pedido: sol de manhã, sol à tarde e lua/estrelas à noite, com hourCycle h23 e America/Sao_Paulo. Testadas transições de meia-noite, 12h e 18h com datas UTC. Links já enviados ao Telegram mantêm o texto original; não foram reenviados.
+
+PDF refeito em web/orderPdf.ts e integrado ao download no OrderModal sem dependência adicional. A4, identidade Delícias da Jú, código/data, cliente/entrega, tabela com quantidade/preço unitário/subtotal, total destacado, pagamento, observações e rodapé numerado. WinAnsi preserva acentos portugueses; strings são emitidas em hexadecimal para neutralizar comandos PDF. Nomes longos quebram linhas e itens extensos paginam; telefone pessoal não é incluído. Geração ocorre no navegador, sem serviço externo.
+
+Três testes PDF aprovados: acentos/dados/horário, offsets/comprimentos de streams e neutralização de comandos, paginação de nomes/itens longos. Agente executou marker da skill PDF, renderizou amostras fictícias com Poppler e inspecionou as páginas; pypdf strict e pdfplumber conferiram os 70 itens, acentos e conteúdo dentro de A4. Amostras privadas ignoradas: .local/pdf/reserva-exemplo.pdf(1p) e reserva-multipagina.pdf(70itens,7p). Inspeção adicional pelo agente principal confirmou o exemplo e a página final.
+
+Checkpoint: base Git 1c35d1a, correções locais sem commit/push/deploy pelo agente. Antes de publicar: executar 013 no Supabase como postgres, após 012, e implantar frontend/backend juntos para o cabeçalho de idempotência. Nenhuma mudança de senha ou URL adicional é necessária por causa dessas correções. Opengrep/ZAP continuam indisponíveis; revisão e testes locais não equivalem a auditoria exaustiva ou validação de produção.
+
+
+### Finalização compacta e cartão crédito/débito — 2026-10-20
+
+Rótulos de cartão agora indicam Crédito/débito e aproximação no checkout, confirmação, Telegram, PDF e painel. Identificador interno credito e schema preservados. O seletor usa rótulo curto para caber em 320px, com explicação de aproximação/entrega logo abaixo.
+
+Finalização dividida em sacola e entrega/pagamento também no desktop. Janela flex com altura máxima 94dvh, corpo rolável e cabeçalho/ação de confirmação fora da rolagem. Lista de itens limitada a 32dvh com rolagem própria. Nome/telefone usam duas colunas no desktop; observações ficam em details recolhido. Removido espaçamento reservado ao antigo botão fixo mobile. Dados do cliente e idempotência são mantidos ao alternar etapas.
+
+Navegador local conferiu app com item real sem enviar pedido e fixture ignorada com 20 produtos fictícios: desktop 1280x720, mobile 375x812 e 320x568. Lista com 20 itens ficou 182px em 320x568 para conteúdo 1906px, sem overflow horizontal; etapa de entrega mantém confirmação no rodapé e rolagem só no corpo em telas curtas. Retorno à sacola preservou nome digitado; botão externo permanece associado ao form checkout-order-form. Nenhuma reserva, notificação ou gravação real enviada. Evidência privada: .local/checkout-mobile-compacto.png. Checkpoint: base 1c35d1a, alterações locais preservadas, sem commit/push/deploy.
+
+Validação final desta etapa: 27 testes aprovados, TypeScript e build Vercel aprovados.

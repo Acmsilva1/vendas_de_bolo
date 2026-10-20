@@ -1,5 +1,8 @@
 import { isItemCategory } from '../shared/categories.js';
 import { createHmac, randomBytes } from 'crypto';
+import { positiveId, finiteNumber, validOrderItems, validIdempotencyKey, MAX_PRICE, MAX_STOCK } from './_validation.js';
+import { databaseReadiness } from './_database-ready.js';
+import { whatsappGreeting } from './_greeting.js';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import {
   getAllCakes,
@@ -109,7 +112,7 @@ async function sendTelegramNotification(
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: message }),
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(3000)
     });
     const body = await response.json() as { ok?: boolean; description?: string };
     if (!response.ok || !body.ok) throw new Error(body.description || `HTTP ${response.status}`);
@@ -140,7 +143,7 @@ function sanitizeIngredients(input: unknown): string[] {
 apiRouter.get('/health', async (req: Request, res: Response) => {
   res.json({
     status: 'ok',
-    database: isPostgresActive() ? 'PostgreSQL (Ativo)' : 'In-Memory (Modo Resiliente)',
+    database: isPostgresActive() ? 'PostgreSQL (Ativo)' : 'Indisponível',
     timestamp: new Date().toISOString()
   });
 });
@@ -149,6 +152,10 @@ apiRouter.post('/auth/login', requireSameOrigin, async (req: Request, res: Respo
   try {
     const username = sanitize(req.body?.username, 60);
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!username || !password || password.length > 256) {
+      res.status(400).json({ error: 'Informe usuário e senha válidos (senha com até 256 caracteres).' });
+      return;
+    }
     const attemptKeys = loginAttemptKeys(req, username || 'desconhecido');
 
     if ((await Promise.all(attemptKeys.map(item => isLoginBlocked(item.key)))).some(Boolean)) {
@@ -210,9 +217,14 @@ apiRouter.get('/cakes', async (req: Request, res: Response) => {
 
 apiRouter.get('/cakes/:id/image', async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = positiveId(req.params.id);
+    if (id === null) {
       res.status(400).json({ error: 'ID inválido.' });
+      return;
+    }
+    const cake = await getCakeById(id);
+    if (!cake || (!cake.is_active && !isAdminRequest(req))) {
+      res.status(404).json({ error: 'Imagem não encontrada.' });
       return;
     }
     const image = await getCakeImage(id);
@@ -221,7 +233,7 @@ apiRouter.get('/cakes/:id/image', async (req: Request, res: Response) => {
       return;
     }
     res.setHeader('Content-Type', image.mimeType);
-    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.setHeader('Cache-Control', 'no-store');
     res.send(image.data);
   } catch (err) {
     res.status(500).json({ error: 'Erro ao carregar imagem.' });
@@ -231,13 +243,13 @@ apiRouter.get('/cakes/:id/image', async (req: Request, res: Response) => {
 // Buscar bolo individual
 apiRouter.get('/cakes/:id', async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = positiveId(req.params.id);
+    if (id === null) {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
     const cake = await getCakeById(id);
-    if (!cake) {
+    if (!cake || (!cake.is_active && !isAdminRequest(req))) {
       res.status(404).json({ error: 'Bolo não encontrado.' });
       return;
     }
@@ -258,11 +270,11 @@ apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
       return;
     }
 
-    const numPrice = Number(price);
-    const numStock = Number(stock_quantity);
+    const numPrice = finiteNumber(price, MAX_PRICE);
+    const numStock = stock_quantity === undefined ? 0 : finiteNumber(stock_quantity, MAX_STOCK, true);
 
-    if (isNaN(numPrice) || numPrice < 0) {
-      res.status(400).json({ error: 'Preço deve ser um valor positivo.' });
+    if (numPrice === null || numStock === null) {
+      res.status(400).json({ error: 'Preço ou estoque inválido.' });
       return;
     }
 
@@ -272,14 +284,17 @@ apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
       return;
     }
 
-    const validCategory = isItemCategory(category) ? category : 'comum';
+    if (category !== undefined && !isItemCategory(category)) {
+      res.status(400).json({ error: 'Categoria inválida.' }); return;
+    }
+    const validCategory = category === undefined ? 'comum' : category;
 
     const newCake = await createCake({
       name: sanitizedName,
       ingredients: sanitizeIngredients(ingredients),
       category: validCategory,
       price: numPrice,
-      stock_quantity: Math.max(0, Math.floor(isNaN(numStock) ? 0 : numStock)),
+      stock_quantity: numStock,
       image_url: '',
       is_active: true
     }, image);
@@ -297,8 +312,8 @@ apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
 // Atualizar informações gerais do bolo (Admin)
 apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = positiveId(req.params.id);
+    if (id === null) {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
@@ -306,7 +321,11 @@ apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) =>
     const { name, ingredients, category, price, stock_quantity, image_data_url, is_active } = req.body;
     const updateData: Record<string, unknown> = {};
 
-    if (name !== undefined) updateData.name = sanitize(name, 100);
+    if (name !== undefined) {
+      const cleanName = sanitize(name, 100);
+      if (!cleanName) { res.status(400).json({ error: 'Nome inválido.' }); return; }
+      updateData.name = cleanName;
+    }
     if (ingredients !== undefined) updateData.ingredients = sanitizeIngredients(ingredients);
     if (category !== undefined) {
       if (!isItemCategory(category)) {
@@ -315,9 +334,20 @@ apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) =>
       }
       updateData.category = category;
     }
-    if (price !== undefined) updateData.price = Number(price);
-    if (stock_quantity !== undefined) updateData.stock_quantity = Math.max(0, Math.floor(Number(stock_quantity)));
-    if (is_active !== undefined) updateData.is_active = Boolean(is_active);
+    if (price !== undefined) {
+      const value = finiteNumber(price, MAX_PRICE);
+      if (value === null) { res.status(400).json({ error: 'Preço inválido.' }); return; }
+      updateData.price = value;
+    }
+    if (stock_quantity !== undefined) {
+      const value = finiteNumber(stock_quantity, MAX_STOCK, true);
+      if (value === null) { res.status(400).json({ error: 'Estoque inválido.' }); return; }
+      updateData.stock_quantity = value;
+    }
+    if (is_active !== undefined) {
+      if (typeof is_active !== 'boolean') { res.status(400).json({ error: 'Estado ativo inválido.' }); return; }
+      updateData.is_active = is_active;
+    }
 
     const image = parseImageDataUrl(image_data_url);
 
@@ -339,18 +369,19 @@ apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) =>
 // Ajuste rápido de estoque (Admin)
 apiRouter.patch('/cakes/:id/stock', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = positiveId(req.params.id);
     const { new_stock, reason, notes } = req.body;
 
-    if (isNaN(id) || new_stock === undefined || isNaN(Number(new_stock))) {
+    const stock = finiteNumber(new_stock, MAX_STOCK, true);
+    if (id === null || stock === null) {
       res.status(400).json({ error: 'Estoque numérico inválido.' });
       return;
     }
 
     const updated = await updateStock(
       id,
-      Number(new_stock),
-      sanitize(reason, 50) || 'ajuste_manual',
+      stock,
+      sanitize(reason, 40) || 'ajuste_manual',
       sanitize(notes, 200) || 'Ajuste rápido pelo painel administrativo'
     );
 
@@ -368,8 +399,8 @@ apiRouter.patch('/cakes/:id/stock', requireAdmin, async (req: Request, res: Resp
 // Exclusão / Desativação de bolo (Admin)
 apiRouter.delete('/cakes/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = positiveId(req.params.id);
+    if (id === null) {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
@@ -408,13 +439,13 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       return;
     }
 
-    if (!Array.isArray(items) || items.length === 0) {
-      res.status(400).json({ error: 'O pedido deve conter ao menos um item.' });
+    if (!validOrderItems(items)) {
+      res.status(400).json({ error: 'Informe de 1 a 100 itens com IDs e quantidades inteiras positivas.' });
       return;
     }
 
     if (payment_method !== 'pix' && payment_method !== 'credito') {
-      res.status(400).json({ error: 'Selecione PIX ou CRÉDITO como forma de pagamento.' });
+      res.status(400).json({ error: 'Selecione PIX ou CRÉDITO/DÉBITO como forma de pagamento.' });
       return;
     }
 
@@ -426,6 +457,12 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       return;
     }
 
+    const idempotencyKey = req.header('Idempotency-Key');
+    if (!validIdempotencyKey(idempotencyKey)) {
+      res.status(400).json({ error: 'Chave de confirmação inválida. Atualize a página e tente novamente.' }); return;
+    }
+    const rateKey = createHmac('sha256', sessionSecret()).update('order-ip|' + req.ip).digest('hex');
+
     // Criar o pedido (valida estoque internamente e deduz)
     const result = await createOrder({
       customer_name: cleanName,
@@ -434,29 +471,22 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       delivery_apartment: cleanApartment,
       notes: sanitize(notes, 300),
       payment_method,
-      items: items.map((i: { cake_id: number; quantity: number }) => ({
-        cake_id: Number(i.cake_id),
-        quantity: Math.max(1, Math.floor(Number(i.quantity)))
-      }))
+      items,
+      idempotency_key: idempotencyKey,
+      rate_key: rateKey
     });
 
     if (!result.success || !result.order) {
-      res.status(400).json({ error: result.error || 'Não foi possível processar o pedido.' });
+      res.status(result.statusCode || 400).json({ error: result.error || 'Não foi possível processar o pedido.' });
       return;
     }
 
     const order = result.order;
-    const brasiliaHour = Number(new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Sao_Paulo',
-      hour: 'numeric',
-      hour12: false
-    }).format(new Date()));
-    const greeting = brasiliaHour < 12
-      ? 'Bom dia'
-      : brasiliaHour < 18
-        ? 'Boa tarde'
-        : 'Boa noite';
-    const whatsappMessage = `${greeting}! \u{1F319}\u{2728} J\u00E1 vi o seu pedido e estou providenciando tudo. Aguarde sua entrega, por gentileza. \u{1F9C1}\u{1F4E6}\u{1F496}`;
+    if (result.replayed) {
+      res.status(200).json({ order, telegramSent: order.telegram_sent, message: 'Reserva já confirmada.' });
+      return;
+    }
+    const whatsappMessage = whatsappGreeting();
     const whatsappLink = `https://wa.me/55${order.customer_phone}?text=${encodeURIComponent(whatsappMessage)}`;
     const itemsListText = order.items
       .map(it => `\u2022 ${it.quantity}x ${escapeTelegramHtml(it.cake_name)} (R$ ${it.subtotal.toFixed(2).replace('.', ',')})`)
@@ -466,7 +496,7 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       `\u{1F370} NOVA RESERVA — DEL\u00CDCIAS DA J\u00DA\n\n` +
       `\u{1F4E6} C\u00F3digo: ${escapeTelegramHtml(order.order_code)}\n` +
       `\u{1F464} Cliente: ${escapeTelegramHtml(order.customer_name)}\n` +
-      `\u{1F4B3} Pagamento: ${order.payment_method === 'pix' ? 'PIX — conferir comprovante na entrega' : 'CRÉDITO — aproximação na entrega'}\n` +
+      `\u{1F4B3} Pagamento: ${order.payment_method === 'pix' ? 'PIX — conferir comprovante na entrega' : 'CRÉDITO/DÉBITO — aproximação na entrega'}\n` +
       `\u{1F4F1} WhatsApp: ${whatsappLink}\n` +
       `\u{1F69A} Entrega: Bloco ${escapeTelegramHtml(order.delivery_block)} \u2022 APT ${escapeTelegramHtml(order.delivery_apartment)}\n\n` +
       `\u{1F4CB} Itens:\n${itemsListText}\n\n` +
@@ -475,7 +505,12 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       `\n${whatsappMessage}`;
 
     const telegram = await sendTelegramNotification(formattedTelegramMessage);
-    await updateTelegramDelivery(order.id, telegram.sent, telegram.error);
+    try {
+      await updateTelegramDelivery(order.id, telegram.sent, telegram.error);
+    } catch {
+      // The order has committed. A notification failure must not invite a second purchase.
+      console.error('Falha ao registrar entrega da notificação; reserva preservada.');
+    }
     order.telegram_sent = telegram.sent;
 
     res.status(201).json({
@@ -506,8 +541,8 @@ apiRouter.get('/orders', requireAdmin, async (req: Request, res: Response) => {
 
 apiRouter.delete('/orders/:id', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
-    if (isNaN(id)) {
+    const id = positiveId(req.params.id);
+    if (id === null) {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
@@ -528,8 +563,9 @@ apiRouter.delete('/orders/:id', requireAdmin, async (req: Request, res: Response
 // Atualizar status do pedido (Admin)
 apiRouter.patch('/orders/:id/status', requireAdmin, async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = positiveId(req.params.id);
     const { status } = req.body;
+    if (id === null) { res.status(400).json({ error: 'ID inválido.' }); return; }
 
     const validStatuses: OrderStatus[] = ['pendente', 'confirmado', 'preparando', 'pronto', 'entregue', 'cancelado'];
     if (!validStatuses.includes(status)) {
@@ -579,7 +615,7 @@ apiRouter.get('/dashboard', requireAdmin, async (req: Request, res: Response) =>
 });
 
 const app = express();
-let databaseInitialization: Promise<{ isPostgres: boolean; message: string }> | null = null;
+export const ensureDatabase = databaseReadiness(initDatabase);
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -594,20 +630,19 @@ app.use((req, res, next) => {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   next();
 });
-app.use(async (_req, res, next) => {
+export async function requireDatabase(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    databaseInitialization ??= initDatabase();
-    const database = await databaseInitialization;
+    const database = await ensureDatabase();
     if (!database.isPostgres) {
       res.status(503).json({ error: database.message });
       return;
     }
     next();
   } catch (error) {
-    databaseInitialization = null;
     next(error);
   }
-});
+}
+app.use(requireDatabase);
 app.use((req, _res, next) => {
   const route = typeof req.query.route === 'string' ? req.query.route : '';
   if (route) {

@@ -76,18 +76,32 @@ RLS e policies restritivas bloqueiam o acesso direto às tabelas por papéis suj
 
 ### Ativar o acesso HTTPS no Supabase existente
 
-1. Execute **migrations/012_supabase_https.sql** no SQL Editor como `postgres`, sobre o schema existente. Em projeto novo, execute primeiro a master e depois a 012. Em schema antigo, aplique também a 010 para liberar Sobremesas. Não é necessário expor o schema `vendas_de_bolo` na Data API: a RPC fica em `public`.
+1. Execute **migrations/012_supabase_https.sql** e depois **migrations/013_pedidos_seguros.sql** no SQL Editor como `postgres`, sobre o schema existente. Em projeto novo, execute primeiro a master, depois 012 e 013. Em schema antigo, aplique também a 010 para liberar Sobremesas. Não é necessário expor o schema `vendas_de_bolo` na Data API: a RPC fica em `public`.
 2. Na Vercel, configure `URL_SUPABASE=https://tndtlnmgofpzwuakvxdt.supabase.co`, `SERVICE_ROLE_SUPABASE` com a chave secreta do backend e mantenha `ADMIN_SESSION_SECRET`. Não use prefixo `VITE_`.
 3. Remova a antiga `DATABASE_URL` da Vercel para evitar confusão. A configuração HTTPS tem prioridade sobre ela; em caso de falha HTTPS, o backend bloqueia operações e não tenta a conexão PostgreSQL antiga.
-4. Publique o código atualizado e faça novo deploy. A migration 012 pode ser instalada antes do deploy e não remove dados/colunas. A remoção opcional da descrição (011) mantém a ordem indicada abaixo.
+4. Publique o código atualizado e faça novo deploy. As migrations 012 e 013 não removem dados/colunas. A 013 é obrigatória para este backend; não reaplique a 012 depois da 013, pois isso substituiria a função protegida pela versão anterior. A remoção opcional da descrição (011) mantém a ordem indicada abaixo.
 
-O login continua próprio da aplicação: o backend recebe o hash do único admin pela RPC, compara a senha com scrypt e assina o cookie. Supabase Auth não é utilizado. Nenhuma senha em texto puro é enviada à Data API. Reservas, baixa de estoque e logs são gravados numa única transação da RPC, com bloqueio dos produtos na mesma ordem. Chamadas de gravação não são repetidas automaticamente em falhas de rede.
+O login continua próprio da aplicação: o backend recebe o hash do único admin pela RPC, compara a senha com scrypt e assina o cookie. Supabase Auth não é utilizado. Nenhuma senha em texto puro é enviada à Data API. Reservas, baixa de estoque e logs são gravados numa única transação da RPC, com bloqueio dos produtos na mesma ordem. Chamadas de gravação não são repetidas automaticamente em falhas de rede. A confirmação usa chave de idempotência para devolver a mesma reserva sem repetir a baixa, inclusive depois de recarregar a página. O navegador guarda somente o resumo criptográfico do pedido e uma chave aleatória; os dados pessoais não vão para esse armazenamento.
 
-O modo HTTPS exige a migration 012 e as tabelas existentes; o runtime não executa DDL pela Data API. No desenvolvimento local, deixe `URL_SUPABASE` e `SUPABASE_URL` vazias e mantenha `DATABASE_URL=postgresql://...` e `PGSCHEMA=vendas_de_bolo` no arquivo privado `local_db.env`. Esse caminho continua usando o PostgreSQL 17 local. Aliases aceitos no backend: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
+O modo HTTPS exige as migrations 012 e 013 e as tabelas existentes; o runtime não executa DDL pela Data API. No desenvolvimento local, deixe `URL_SUPABASE` e `SUPABASE_URL` vazias e mantenha `DATABASE_URL=postgresql://...` e `PGSCHEMA=vendas_de_bolo` no arquivo privado `local_db.env`. Esse caminho continua usando o PostgreSQL 17 local. Aliases aceitos no backend: `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 Após o deploy, valide `https://SEU-DOMINIO/api/health`. O campo `database` deve indicar PostgreSQL ativo.
 
+### Proteções na confirmação de pedidos
+
+A migration 013 acrescenta `idempotencia_chave` e `idempotencia_hash` aos pedidos e mantém a função base no schema privado, sem permissão de execução para clientes ou service_role. A RPC pública continua executável somente pelo backend. Repetição da mesma chave/conteúdo retorna a reserva existente (HTTP 200); outro conteúdo com a mesma chave retorna 409. A interface cria e preserva o cabeçalho `Idempotency-Key`; clientes externos da API também devem enviar uma chave aleatória de 16 a 128 caracteres (letras, números, hífen ou sublinhado).
+
+O backend limita a 20 novas tentativas válidas de pedido por IP em uma janela fixa de 15 minutos; repetições idempotentes não consomem o limite. A chave do limite usa HMAC do IP, não o endereço em texto puro. O contador é persistente e compartilhado entre instâncias. Respostas acima do limite usam 429; IPs compartilhados também compartilham essa cota. Quantidades, IDs, preços, estoque, booleanos e totais monetários são validados antes da gravação. Falhas de notificação não invalidam pedidos já confirmados.
+
+A API local e a Vercel usam a mesma recuperação de inicialização, com novas tentativas após um segundo e compartilhamento de tentativas concorrentes. O timeout de cada chamada HTTPS é de 5 segundos, o do Telegram de 3 segundos e o orçamento da função Vercel é de 60 segundos. Isso reduz respostas ambíguas; a idempotência continua necessária para quedas de rede após o commit. Instale 013 e publique frontend/backend juntos; a interface antiga não envia a chave exigida. Para rollback de código, escolha uma versão compatível com a 013, sem remover colunas ou voltar à RPC 012.
+
+A saudação no link WhatsApp usa o momento do pedido em `America/Sao_Paulo`: bom dia/sol antes de 12h, boa tarde/sol entre 12h e 18h e boa noite/lua a partir de 18h. Mensagens já enviadas ao Telegram preservam o texto original do link.
+
 ## Validações
+
+### PDF da reserva
+
+O download usa `web/orderPdf.ts`, sem biblioteca adicional: formato A4 com acentos, marca, código/data em São Paulo, cliente/entrega, tabela de itens, preços unitários/subtotais, total, pagamento e observações. Nomes longos têm quebra de linha e pedidos extensos ganham novas páginas com cabeçalho/rodapé. Não exporta o telefone pessoal do cliente. O arquivo é gerado localmente no navegador, sem upload para serviço externo.
 
 - `npm test`: testes unitários.
 - `npm run lint`: validação TypeScript.

@@ -1,7 +1,8 @@
-import { randomBytes, scryptSync, timingSafeEqual } from 'crypto';
+import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
 import { Pool, PoolClient } from 'pg';
 import { AppStats, Cake, Order, OrderItem } from './_types.js';
 import { getSupabaseConfig, supabaseRpc, type SupabaseConfig } from './_supabase.js';
+import { validOrderItems, validIdempotencyKey, MAX_PRICE } from './_validation.js';
 
 let pgPool: Pool | null = null;
 let usePostgres = false;
@@ -68,10 +69,13 @@ export function hashPassword(password: string, salt = randomBytes(16).toString('
 }
 
 export function verifyPasswordHash(password: string, storedHash: string): boolean {
-  const [algorithm, salt, expectedHex] = storedHash.split('$');
-  if (algorithm !== 'scrypt' || !salt || !expectedHex) return false;
+  if (typeof storedHash !== 'string') return false;
+  const parts = storedHash.split('$');
+  const [algorithm, salt, expectedHex] = parts;
+  // Existing callers may use a custom salt; the hash must always contain 64 bytes.
+  if (parts.length !== 3 || algorithm !== 'scrypt' || !salt || salt.length > 128 || !/^[a-f0-9]{128}$/i.test(expectedHex || '')) return false;
   const expected = Buffer.from(expectedHex, 'hex');
-  const actual = scryptSync(password, salt, expected.length);
+  const actual = scryptSync(password, salt, 64);
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
@@ -81,7 +85,10 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
   try {
     const config = getSupabaseConfig();
     if (config) {
-      await supabaseRpc(config, 'health');
+      const health = await supabaseRpc<{ ok: boolean; version?: number }>(config, 'health');
+      if (!health?.ok || health.version !== 13) {
+        throw new Error('Supabase HTTPS: execute a migration 013_pedidos_seguros.sql antes de usar este backend.');
+      }
       if (process.env.ADMIN_INITIAL_PASSWORD) {
         await supabaseRpc(config, 'ensure_admin', {
           username: process.env.ADMIN_INITIAL_USER || 'Admin',
@@ -186,6 +193,9 @@ async function runSchema(pool: Pool, schema: string): Promise<void> {
       atualizado_em TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
     ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS forma_pagamento VARCHAR(20) NOT NULL DEFAULT 'credito';
+    ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS idempotencia_chave VARCHAR(128);
+    ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS idempotencia_hash VARCHAR(64);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pedidos_idempotencia ON pedidos(idempotencia_chave) WHERE idempotencia_chave IS NOT NULL;
     DO $$
     BEGIN
       IF NOT EXISTS (
@@ -435,8 +445,21 @@ export async function createOrder(data: {
   notes?: string;
   payment_method: 'pix' | 'credito';
   items: { cake_id: number; quantity: number }[];
-}): Promise<{ order: Order; success: boolean; error?: string }> {
-  if (supabaseConfig) return supabaseRpc(supabaseConfig, 'order_create', data);
+  idempotency_key: string;
+  rate_key: string;
+}): Promise<{ order: Order; success: boolean; error?: string; statusCode?: number; replayed?: boolean }> {
+  if (!validOrderItems(data.items) || !validIdempotencyKey(data.idempotency_key) || !/^[a-f0-9]{64}$/.test(data.rate_key)) {
+    return { order: null as unknown as Order, success: false, error: 'Pedido inválido.', statusCode: 400 };
+  }
+  const aggregated = new Map<number, number>();
+  for (const item of data.items) aggregated.set(item.cake_id, (aggregated.get(item.cake_id) || 0) + item.quantity);
+  const fingerprint = createHash('sha256').update(JSON.stringify({
+    customer_name: data.customer_name, customer_phone: data.customer_phone,
+    delivery_block: data.delivery_block, delivery_apartment: data.delivery_apartment,
+    notes: data.notes || '', payment_method: data.payment_method,
+    items: [...aggregated].sort((a,b) => a[0] - b[0])
+  })).digest('hex');
+  if (supabaseConfig) return supabaseRpc(supabaseConfig, 'order_create', { ...data, request_hash: fingerprint });
   const quantities = new Map<number, number>();
   for (const item of data.items) {
     if (!Number.isInteger(item.cake_id) || !Number.isInteger(item.quantity) || item.quantity <= 0) {
@@ -449,6 +472,35 @@ export async function createOrder(data: {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [data.idempotency_key]);
+    const existing = await client.query(
+      `SELECT ${orderColumns}, idempotencia_hash FROM pedidos WHERE idempotencia_chave = $1`, [data.idempotency_key]
+    );
+    if (existing.rows[0]) {
+      if (existing.rows[0].idempotencia_hash !== fingerprint) {
+        await client.query('ROLLBACK');
+        return { order: null as unknown as Order, success: false, statusCode: 409, error: 'Esta chave já foi usada para outro pedido.' };
+      }
+      const items = await client.query(
+        `SELECT id, pedido_id AS order_id, bolo_id AS cake_id, nome_bolo AS cake_name,
+          quantidade AS quantity, preco_unitario AS unit_price, subtotal FROM itens_pedido WHERE pedido_id = $1 ORDER BY id`,
+        [existing.rows[0].id]
+      );
+      const { idempotencia_hash: _privateHash, ...row } = existing.rows[0];
+      await client.query('COMMIT');
+      return { order: mapOrder(row, items.rows.map(item => ({ ...item, unit_price: Number(item.unit_price), subtotal: Number(item.subtotal) }))), success: true, replayed: true };
+    }
+    const rate = await client.query(
+      `INSERT INTO tentativas_login AS t(chave, tentativas) VALUES ($1, 1)
+       ON CONFLICT (chave) DO UPDATE SET
+         tentativas = CASE WHEN t.atualizado_em < CURRENT_TIMESTAMP - INTERVAL '15 minutes' THEN 1 ELSE LEAST(t.tentativas + 1, 21) END,
+         atualizado_em = CASE WHEN t.atualizado_em < CURRENT_TIMESTAMP - INTERVAL '15 minutes' THEN CURRENT_TIMESTAMP ELSE t.atualizado_em END
+       RETURNING tentativas`, [data.rate_key]
+    );
+    if (rate.rows[0].tentativas > 20) {
+      await client.query('COMMIT');
+      return { order: null as unknown as Order, success: false, statusCode: 429, error: 'Limite de pedidos atingido. Aguarde 15 minutos.' };
+    }
     const ids = [...quantities.keys()].sort((a, b) => a - b);
     const locked = await client.query(
       `SELECT ${cakeColumns} FROM bolos WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`,
@@ -465,11 +517,11 @@ export async function createOrder(data: {
       const cake = cakes.get(id);
       const quantity = quantities.get(id) || 0;
       if (!cake || !cake.is_active) {
-        await client.query('ROLLBACK');
+        await client.query('COMMIT');
         return { order: null as unknown as Order, success: false, error: `Bolo ID ${id} indisponível.` };
       }
       if (cake.stock_quantity < quantity) {
-        await client.query('ROLLBACK');
+        await client.query('COMMIT');
         return {
           order: null as unknown as Order,
           success: false,
@@ -477,16 +529,20 @@ export async function createOrder(data: {
         };
       }
       const subtotal = Number((cake.price * quantity).toFixed(2));
-      totalAmount += subtotal;
+      totalAmount = Number((totalAmount + subtotal).toFixed(2));
+      if (subtotal > MAX_PRICE || totalAmount > MAX_PRICE) {
+        await client.query('COMMIT');
+        return { order: null as unknown as Order, success: false, statusCode: 400, error: 'O valor do pedido ultrapassa o limite permitido.' };
+      }
       processedItems.push({ cake_id: id, cake_name: cake.name, quantity, unit_price: cake.price, subtotal });
     }
 
     const orderCode = `DJU-${Date.now().toString(36).toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}`;
     const insertedOrder = await client.query(
       `INSERT INTO pedidos
-       (codigo, nome_cliente, whatsapp_cliente, bloco, apartamento, observacoes, valor_total, forma_pagamento, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pendente') RETURNING ${orderColumns}`,
-      [orderCode, data.customer_name, data.customer_phone, data.delivery_block, data.delivery_apartment, data.notes || '', totalAmount, data.payment_method]
+       (codigo, nome_cliente, whatsapp_cliente, bloco, apartamento, observacoes, valor_total, forma_pagamento, status, idempotencia_chave, idempotencia_hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pendente', $9, $10) RETURNING ${orderColumns}`,
+      [orderCode, data.customer_name, data.customer_phone, data.delivery_block, data.delivery_apartment, data.notes || '', totalAmount, data.payment_method, data.idempotency_key, fingerprint]
     );
     const orderId = Number(insertedOrder.rows[0].id);
 

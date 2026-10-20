@@ -44,6 +44,8 @@
     "vite": "^6.2.3"
   },
   "overrides": {
-    "qs": "6.16.0"
+    "qs": "6.16.0",
+    "proxy-addr": "2.0.8",
+    "source-map-js": "1.2.2"
   }
 }

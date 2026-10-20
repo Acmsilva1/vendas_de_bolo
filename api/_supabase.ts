@@ -27,7 +27,7 @@ export async function supabaseRpc<T>(config: SupabaseConfig, operation: string, 
     response = await fetch(`${config.url}/rest/v1/rpc/vendas_backend`, {
       method: 'POST', headers,
       body: JSON.stringify({ p_operation: operation, p_data: data }),
-      signal: AbortSignal.timeout(15000), redirect: 'error', cache: 'no-store'
+      signal: AbortSignal.timeout(5000), redirect: 'error', cache: 'no-store'
     });
   } catch {
     throw new Error('Supabase HTTPS indisponível: falha de rede ou tempo limite.');
@@ -38,7 +38,7 @@ export async function supabaseRpc<T>(config: SupabaseConfig, operation: string, 
       throw new Error('Supabase HTTPS: chave secreta inválida ou sem permissão para vendas_backend.');
     }
     if (response.status === 404) {
-      throw new Error('Supabase HTTPS: execute a migration 012_supabase_https.sql no SQL Editor.');
+      throw new Error('Supabase HTTPS: execute as migrations 012_supabase_https.sql e 013_pedidos_seguros.sql no SQL Editor.');
     }
     throw new Error(`Supabase HTTPS: operação indisponível (HTTP ${response.status}). Confira a migration 012 e o schema.`);
   }

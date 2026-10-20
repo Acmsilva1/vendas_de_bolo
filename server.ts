@@ -2,8 +2,7 @@ import express from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import { createServer as createViteServer } from 'vite';
-import { apiRouter } from './api/index.js';
-import { initDatabase } from './api/_db.js';
+import { apiRouter, requireDatabase, ensureDatabase } from './api/index.js';
 
 dotenv.config();
 dotenv.config({ path: 'local_db.env', override: false });
@@ -43,14 +42,14 @@ async function startServer() {
 
   // Inicialização do banco (PostgreSQL ou fallback resiliente)
   try {
-    const dbStatus = await initDatabase();
+    const dbStatus = await ensureDatabase();
     console.log(`[Delícias da Jú Backend] Status do banco: ${dbStatus.message}`);
   } catch (err) {
     console.error('[Delícias da Jú Backend] Erro na inicialização do banco:', err);
   }
 
   // Rotas da API RESTful montadas antes dos middlewares de frontend
-  app.use('/api', apiRouter);
+  app.use('/api', requireDatabase, apiRouter);
 
   // Integração com o Vite para servir o frontend React
   if (process.env.NODE_ENV !== 'production') {
