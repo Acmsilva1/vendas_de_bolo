@@ -2,7 +2,7 @@ import { ITEM_CATEGORIES } from '../../shared/categories';
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cake as CakeType, CartItem } from '../types';
-import { ShoppingBag, Plus, Minus, Send, Sparkles, AlertTriangle, CheckCircle2, XCircle, Info, CakeSlice } from 'lucide-react';
+import { ShoppingBag, Plus, Minus, Send, Sparkles, AlertTriangle, CheckCircle2, XCircle, Info, CakeSlice, Banknote, Motorbike } from 'lucide-react';
 
 interface CakeCatalogProps {
   cakes: CakeType[];
@@ -62,14 +62,14 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
             Escolha seu favorito na <span className="font-semibold text-pink-700">Delícias da Jú</span> e reserve para receber no condomínio.
           </p>
 
-          <div className="grid grid-cols-2 sm:flex sm:flex-wrap items-stretch sm:items-center gap-2 sm:gap-3 text-xs text-slate-600">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-[11px] sm:text-xs text-slate-600">
             <div className="flex items-center space-x-1.5 bg-violet-50/80 px-2 sm:px-3 py-1.5 rounded-lg border border-violet-200">
-              <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-emerald-600" />
-              <span>Estoque atualizado</span>
+              <Banknote className="w-3.5 h-3.5 shrink-0 text-emerald-600" aria-hidden="true" />
+              <span>PIX ou DEBITO / CREDITO (por aproximação)</span>
             </div>
             <div className="flex items-center space-x-1.5 bg-violet-50/80 px-2 sm:px-3 py-1.5 rounded-lg border border-violet-200">
-              <Send className="w-3.5 h-3.5 shrink-0 text-sky-600" />
-              <span>Entrega no condomínio</span>
+              <Motorbike className="w-3.5 h-3.5 shrink-0 text-sky-600" aria-hidden="true" />
+              <span>Entregas no condomínio</span>
             </div>
           </div>
         </div>
@@ -137,7 +137,7 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
                 className="mobile-cake-card min-w-0 flex flex-col bg-white rounded-xl border border-pink-100 overflow-hidden shadow-sm hover:border-pink-300 transition-colors group"
               >
                 {/* Imagem do bolo com indicador de estoque */}
-                <div className="mobile-cake-image relative h-20 w-full flex-shrink-0 sm:h-24 overflow-hidden bg-rose-50">
+                <div className="mobile-cake-image relative h-16 w-full flex-shrink-0 sm:h-24 overflow-hidden bg-rose-50">
                   <img
                     src={cake.image_url || '/assets/cake-card.svg'}
                     alt={cake.name}
@@ -151,17 +151,17 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
                   {/* Indicador de estoque */}
                   <div className="absolute bottom-1.5 left-1.5 right-1.5 sm:left-auto sm:right-2">
                     {isOutOfStock ? (
-                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[10px] sm:text-[11px] font-bold bg-red-50/95 text-red-700 border border-red-200 sm:backdrop-blur-md shadow-sm">
+                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[9px] sm:text-[11px] font-bold bg-red-50/95 text-red-700 border border-red-200 sm:backdrop-blur-md shadow-sm">
                         <XCircle className="w-3.5 h-3.5" />
                         <span>Esgotado</span>
                       </span>
                     ) : isLowStock ? (
-                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[10px] sm:text-[11px] font-bold bg-pink-100/90 text-pink-800 border border-pink-400/80 sm:backdrop-blur-md shadow-sm ">
+                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[9px] sm:text-[11px] font-bold bg-pink-100/90 text-pink-800 border border-pink-400/80 sm:backdrop-blur-md shadow-sm ">
                         <AlertTriangle className="w-3.5 h-3.5" />
                         <span>Restam {cake.stock_quantity} un!</span>
                       </span>
                     ) : (
-                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[10px] sm:text-[11px] font-semibold bg-emerald-50/95 text-emerald-700 border border-emerald-200 sm:backdrop-blur-md shadow-sm">
+                      <span className="flex items-center justify-center space-x-1 px-1.5 py-0.5 rounded-md sm:rounded-full text-[9px] sm:text-[11px] font-semibold bg-emerald-50/95 text-emerald-700 border border-emerald-200 sm:backdrop-blur-md shadow-sm">
                         <CheckCircle2 className="w-3.5 h-3.5" />
                         <span>{cake.stock_quantity} disponíveis</span>
                       </span>
@@ -170,9 +170,9 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
                 </div>
 
                 {/* Conteúdo e Informações */}
-                <div className="relative min-w-0 p-2 sm:p-2.5 flex-1 flex flex-col justify-between">
+                <div className="relative min-w-0 p-1.5 sm:p-2.5 flex-1 flex flex-col justify-between">
                   <div>
-                    <h3 className="line-clamp-2 break-words pr-7 text-sm font-serif font-bold text-slate-900 mb-1 leading-snug">
+                    <h3 className="line-clamp-2 break-words pr-7 text-xs sm:text-sm font-serif font-bold text-slate-900 mb-1 leading-snug">
                       {cake.name}
                     </h3>
                     <button
@@ -186,46 +186,46 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
 
                     </button>
                     {openIngredients === cake.id && (
-                      <div className="mb-1.5 rounded-lg bg-rose-50 px-2 py-1 text-[11px] sm:px-2 sm:py-1.5 text-slate-600 break-words">
+                      <div className="mb-1.5 rounded-lg bg-rose-50 px-2 py-1 text-[10px] sm:text-[11px] sm:px-2 sm:py-1.5 text-slate-600 break-words">
                         {cake.ingredients.length > 0 ? cake.ingredients.join(', ') : 'Ingredientes ainda não informados.'}
                       </div>
                     )}
                   </div>
 
-                  <div className="pt-1.5 border-t border-violet-100">
-                    <div className="flex flex-row items-baseline justify-between gap-1 mb-1.5">
+                  <div className="pt-1 sm:pt-1.5 border-t border-violet-100">
+                    <div className="flex flex-row items-baseline justify-between gap-1 mb-1 sm:mb-1.5">
                       <span className="sr-only">Preço unitário:</span>
-                      <span className="text-base font-bold font-serif text-pink-600 whitespace-nowrap">
+                      <span className="text-sm sm:text-base font-bold font-serif text-pink-600 whitespace-nowrap">
                         R$ {cake.price.toFixed(2).replace('.', ',')}
                       </span>
                     </div>
 
                     {/* Ações de Quantidade e Adição */}
                     {isOutOfStock ? (
-                      <div className="w-full py-2.5 px-4 rounded-xl bg-violet-50/80 text-slate-500 text-center text-xs font-semibold border border-violet-200/50">
+                      <div className="w-full py-2 sm:py-2.5 px-1.5 sm:px-4 rounded-xl bg-violet-50/80 text-slate-500 text-center text-[10px] sm:text-xs font-semibold border border-violet-200/50">
                         Indisponível no momento
                       </div>
                     ) : (
-                       <div className="flex flex-col items-stretch gap-1.5 sm:flex-row">
+                       <div className="catalog-card-controls flex flex-row items-stretch gap-1 sm:gap-1.5">
                         {/* Seletor de Quantidade */}
-                        <div className="flex h-9 shrink-0 items-center justify-between bg-violet-50 rounded-lg border border-violet-200 p-0.5 sm:w-24">
+                        <div className="catalog-quantity-picker flex w-[3.75rem] h-7 sm:h-9 shrink-0 items-center justify-between bg-violet-50 rounded-lg border border-violet-200 p-0 sm:p-0.5 sm:w-24">
                           <button
                             type="button"
                             onClick={() => handleQtyChange(cake.id, -1, cake.stock_quantity)}
                             aria-label={`Diminuir quantidade de ${cake.name}`}
-                            className="min-h-8 min-w-8 flex items-center justify-center p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-violet-100 transition-colors disabled:opacity-30"
+                            className="min-h-6 sm:min-h-8 w-5 sm:w-8 shrink-0 flex items-center justify-center sm:p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-violet-100 transition-colors disabled:opacity-30"
                             disabled={currentQty <= 1}
                           >
                             <Minus className="w-3.5 h-3.5" />
                           </button>
-                          <span className="w-5 text-center text-xs font-bold text-slate-800">
+                          <span className="min-w-0 flex-1 text-center text-[10px] sm:text-xs font-bold text-slate-800">
                             {currentQty}
                           </span>
                           <button
                             type="button"
                             onClick={() => handleQtyChange(cake.id, 1, cake.stock_quantity)}
                             aria-label={`Aumentar quantidade de ${cake.name}`}
-                            className="min-h-8 min-w-8 flex items-center justify-center p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-violet-100 transition-colors disabled:opacity-30"
+                            className="min-h-6 sm:min-h-8 w-5 sm:w-8 shrink-0 flex items-center justify-center sm:p-1 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-violet-100 transition-colors disabled:opacity-30"
                             disabled={currentQty >= cake.stock_quantity}
                           >
                             <Plus className="w-3.5 h-3.5" />
@@ -239,10 +239,10 @@ export const CakeCatalog: React.FC<CakeCatalogProps> = ({
                           aria-label={`Adicionar ${cake.name} ao carrinho`}
                           onClick={() => onAddToCart(cake, currentQty)}
                           disabled={reservationBusy}
-                          className="min-h-9 flex-1 py-1.5 px-2 rounded-lg bg-pink-600 hover:bg-pink-500 active:scale-98 text-white text-xs font-semibold transition-all flex items-center justify-center space-x-1.5 shadow-sm"
+                          className="min-w-0 min-h-7 sm:min-h-9 flex-1 py-1 sm:py-1.5 px-1 sm:px-2 rounded-lg bg-pink-600 hover:bg-pink-500 active:scale-98 text-white text-[10px] sm:text-xs font-semibold transition-all flex items-center justify-center sm:space-x-1.5 shadow-sm"
                         >
-                          <ShoppingBag className="w-4 h-4" />
-                          <span>{pendingReservationId === cake.id ? 'Reservando...' : 'Adicionar'}</span>
+                          <ShoppingBag className="hidden sm:block w-4 h-4 shrink-0" />
+                          <span className="truncate">{pendingReservationId === cake.id ? 'Reservando...' : 'Adicionar'}</span>
                         </button>
                       </div>
                     )}

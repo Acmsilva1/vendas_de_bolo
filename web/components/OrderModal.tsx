@@ -370,7 +370,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2.5">
                   <span className="flex items-center gap-2">
                     <ShoppingCart className="w-4 h-4 text-pink-600" />
-                    Sacola ({activeCart.length} {activeCart.length === 1 ? 'ativo' : 'ativos'})
+                    Sacola ({activeCart.length} {activeCart.length === 1 ? 'adicionado' : 'adicionados'})
                   </span>
                 </h3>
 

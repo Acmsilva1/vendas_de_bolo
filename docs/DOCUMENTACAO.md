@@ -483,3 +483,73 @@ Fluxo: cliente -> API -> RPC transacional. configuracao_loja decide se aceita co
 Validação: 30 testes automatizados, TypeScript e build completo frontend/backend aprovados. Gitleaks nas alterações/016 sem achados. PostgreSQL 17 descartável autorizado: 14 grupos aprovados incluindo criação, qty, remoção/re-add, compra/replay, expiração sem tráfego, renovação, fechamento/reabertura, rollback, backfill/reaplicação, exclusão ativa/tardia e concorrência pela última unidade. RLS/ACL PUBLIC tabela/view/sequence/helper/RPC conferidos; anon/authenticated/service_role ausentes localmente, testes nominais pulados. Uma regressão de exclusão tardia foi reproduzida, corrigida e testada novamente. Schemas/RPCs de teste removidos. Inicializador real executado duas vezes em schema descartável confirmou health16 e histórico único false/loja_fechada preservado.
 
 Aplicação LOCAL: destino localhost/schema vendas_de_bolo verificado, backup privado em .local/backups/pre-reservation-history-*.sql, migration016 aplicada à RPC local_backend em transação sem reiniciar o app. Health RPC passou de15 para16, view inicialmente com0registros/0ativos porque não havia holds. GET /api/store/status e /api/health permaneceram HTTP200, loja continuou aberta; nenhum pedido/reserva fictício criado no schema real. Supabase/Vercel não alterados: aplicar016 após015 antes de publicar o backend novo. Checkpoint: base c0f39ca, sem commit/push/deploy pelo agente.
+
+### Indicadores de pagamento e entrega no catálogo — 2026-10-20
+
+CakeCatalog: substituído Estoque atualizado por PIX / Crédito / Débito (por aproximação), com Banknote; Entregas no condomínio usa Motorbike. Grupo flexível com quebra de linha e fonte compacta no mobile; badges preservam o estilo existente. Valores, checkout e regras de pagamento/estoque não foram alterados.
+
+Validação: TypeScript e build Vercel aprovados. Fixture local em 320x568 confirmou ambos os ícones e textos, sem overflow horizontal (scrollWidth/clientWidth 305, descontada a barra vertical). Evidência privada ignorada .local/catalogo-pagamento-entrega.png. Alteração visual sem testes novos, migration ou deploy. Checkpoint: base 5aa8ec5, sem commit/push pelo agente.
+
+### Texto das formas de pagamento — 2026-10-20
+
+Indicador do catálogo alterado para PIX ou DEBITO / CREDITO (por aproximação), conforme solicitado, distinguindo PIX dos cartões por aproximação. Apenas texto; conferência da substituição e git diff --check aprovados. Sem testes novos, build adicional, alteração de lógica ou deploy. Checkpoint: alteração local sem commit/push pelo agente.
+
+### Rótulo da sacola — 2026-10-20
+
+Título alterado de ativo/ativos para adicionado/adicionados, preservando a contagem e as regras das reservas. Conferência da substituição e git diff --check aprovados. Alteração textual sem testes novos, build adicional, commit, push ou deploy.
+
+### Texto acolhedor no rodapé — 2026-10-20
+
+Rodapé alterado para “Bolos feitos com carinho para adoçar seu dia, com entrega no condomínio.”, removendo a referência ao estoque em tempo real. Alteração textual conferida com git diff --check, sem testes novos, build adicional, commit, push ou deploy.
+
+### Ícones da marca e cardápio — 2026-10-20
+
+Marca no Navbar agora usa CakePieceIcon.tsx, SVG próprio de uma fatia de bolo caseiro com massa dourada, pequenos poros, cobertura de chocolate, perspectiva e gradientes; removido ícone de bolo com velinhas. Após o ajuste solicitado, botão Cardápio usa BookOpen (livro/cardápio aberto), preservando a fatia apenas na marca. SVG decorativo com aria-hidden e IDs de gradientes isolados por useId; rótulos acessíveis dos botões preservados. Sem imagens raster ou dependências novas.
+
+Validação: TypeScript e build Vercel aprovados; navegador em fixture mobile 375px confirmou fatia na marca, BookOpen no botão selecionado e ausência de overflow horizontal (largura/scrollWidth375). Evidência privada ignorada .local/navbar-fatia-cardapio.png. Sem testes novos por ser alteração visual, sem banco, commit, push ou deploy. Checkpoint: base5aa8ec5, demais alterações locais preservadas.
+
+### Folha centralizada e quatro cards por linha no desktop — 2026-10-20
+
+Catálogo em telas >=1024px ganhou superfície branca centralizada, borda/sombra discretas, padding10mm e altura mínima297mm, mantendo a rolagem do documento. Após experimentar largura A4 rígida, usuário pediu ampliar: largura final calc(100% - 10cm), sem max-width, com margens laterais5cm em unidadesCSS. Cabeçalho sticky permanece fora da folha e não foi alterado.
+
+Grade final com quatro colunas no desktop. Controles receberam classes catalog-card-controls/catalog-quantity-picker: ficam empilhados em1024–1439px e lado a lado a partir de1440px, evitando transbordar os cards. Regras anteriores de mobile/tablet preservadas; nenhuma alteração nos produtos, reservas ou backend.
+
+Validação em fixture local:1920px com quatro colunas (~350px por card);1280px com quatro de~190px;1024px com quatro de~126px, sem overflow de controles/página. Mobile375px manteve duas colunas e nenhuma altura mínima de folha. Em1280, margem lateral~189px e cabeçalho top0 após scrollY472,8 confirmados. TypeScript/build Vercel/git diff --check aprovados; sem testes novos por ser mudança visual. Evidência final ignorada .local/catalogo-desktop-quatro-colunas.png. Checkpoint: base5aa8ec5, alterações locais preservadas, sem banco, commit, push ou deploy.
+
+### Ajuste visual mobile — cards e controles (20/10/2026)
+- Reduzidos fonte do nome/preço, imagem e espaçamentos dos cards somente no mobile; dimensões a partir de sm preservadas.
+- Quantidade e Adicionar agora ficam lado a lado no mobile, com altura de 28 px; botão mantém texto e nome acessível, com ícone de sacola visível a partir de sm.
+- Conferência visual em fixture local isolada a 360 px: controles na mesma linha, quantidade incrementada para 2 e sem overflow horizontal. Captura ignorada em `.local/catalogo-mobile-controles-linha.png`.
+- TypeScript aprovado. Sem mudanças no banco, commit, push ou deploy.
+- Build Vercel aprovado após liberar execução local do esbuild (primeira tentativa limitada por spawn EPERM). Diff sem erros de whitespace.
+
+### Auditoria de acesso administrativo — 2026-10-20
+- Escopo: revisão do login, assinatura de sessão, autorização das rotas administrativas, interface e grants das migrations HTTPS. Nenhuma chamada à produção ou ao banco real.
+- Evidência confirmada em API local com RPC/banco inteiramente simulados: acesso a /orders sem cookie=401; cookie falso=401; login fictício=200; logout=204; reutilização do cookie anterior após logout=200, após troca do hash de senha=200 e após conta inativa (hash indisponível)=200.
+- Causa: api/index.ts isAdminRequest valida somente assinatura/expiração; logout somente expira cookie no navegador. api/_auth.ts não consulta revogação/estado do usuário. TTL de oito horas. Uma pessoa que já tenha obtido cookie válido pode reutilizá-lo até expirar; não foi demonstrado bypass anônimo nem falsificação de assinatura.
+- Recomendação pendente: sessões persistidas por identificador aleatório com revogação no logout e invalidação de todas as sessões ao trocar senha/desativar conta; validar estado do admin nas requisições protegidas. Nenhuma alteração de autenticação nesta auditoria.
+- Evidência reproduzível ignorada: .local/admin-access-audit.ts (somente credenciais fictícias, bloqueio de rede externa).
+- Validação: 10 testes isolados aprovados (auth/security-api/security-validation); Gitleaks detect com redação e histórico local retornou código 0 sem achados. Não equivale a auditoria de secrets da Vercel/Supabase nem de arquivos locais ignorados. Opengrep indisponível; DAST e produção não executados. Nenhuma confirmação sobre a senha atualmente configurada.
+- Checkpoint: revisão concluída; falha de revogação documentada e ainda não corrigida. Sem commit, push ou deploy; demais alterações locais preservadas.
+
+### Correção de revogação das sessões administrativas — 2026-10-20
+- Migration 017_sessoes_admin.sql cria tabela privada com RLS e hash SHA-256 do token (não armazena cookie original), usuário e validade. RPC de sessão acessível somente pelo backend/service_role; wrappers anteriores preservados.
+- Cada acesso administrativo exige assinatura válida e sessão existente/não expirada no banco, com admin ativo. Sessões antigas sem registro passam a ser rejeitadas. Falha ao consultar o banco bloqueia acesso (503).
+- Logout remove o registro antes de limpar o cookie; falha na revogação não é apresentada como sucesso. Novo login gera token aleatório diferente e revoga o cookie anterior apresentado por esse navegador.
+- Trigger revoga todas as sessões ao mudar senha, nome ou estado ativo; exclusão do admin remove sessões por FK. Criação bloqueia a linha do usuário e confere o hash que o backend validou, evitando criar sessão com credencial desatualizada.
+- Cookie HttpOnly/SameSite=Strict/Secure em produção, sem Max-Age/Expires no login (cookie de sessão do navegador), limite absoluto de oito horas no servidor. Fechar aba não equivale a logout; restauração de sessão do navegador pode preservar cookies. Não há garantia de vínculo físico à máquina nem detecção confiável do fechamento do navegador. Para revogação imediata, usar Sair.
+- Validação: 31 testes isolados aprovados, incluindo rejeição de cookie não registrado, revogação no logout, rotação, expiração e falha fechada. PostgreSQL 17 descartável autorizado: 12 verificações aprovadas, migrations 012..017 executadas duas vezes, RLS/ACL PUBLIC, alteração de senha, desativação/reativação, exclusão e limpeza de expiradas. Schema removido ao final; dados reais da loja preservados.
+- TypeScript aprovado; Gitleaks no histórico retornou código 0, sem achados. Opengrep indisponível, sem DAST/validação de produção. Scripts ignorados em .local/validate-admin-sessions.mjs e teste permanente tests/admin-session.test.ts.
+- Publicação pendente: executar migrations existentes até 016 e depois 017 no Supabase; só então publicar o backend compatível com versão 17. O backend recusa versão anterior. Não foi aplicada a migration no schema real local ou no Supabase; sem restart do backend em execução, commit, push ou deploy.
+- Checkpoint: código e migration prontos; alterações locais anteriores preservadas. A proteção nova entra em vigor no ambiente publicado após migration e deploy.
+- Build Vercel também aprovado; git diff --check sem erros.
+
+### Troca de senha pelo painel e ações compactas — 2026-10-20
+- Incluído Trocar senha imediatamente ao lado de Sair; Novo item perdeu expansão e recebeu dimensões compactas. Os três botões têm 32px de altura, inclusive no mobile, com exceção CSS restrita ao cabeçalho do admin.
+- Modal nativo com foco inicial, campos senha atual/nova/confirmação, autocomplete adequado e aviso de encerramento de todas as sessões. Nova senha entre 12 e 128 caracteres, diferente da atual, sem remover espaços. Após sucesso, limpa campos e retorna ao login.
+- POST /auth/password exige sessão administrativa válida, mesma origem, senha atual e confirmação; ignora username enviado pelo cliente. Rate limit separado para tentativas de troca de senha. Hash scrypt somente no backend, sem senhas em logs/RPC.
+- Migration 018_troca_senha_admin.sql adiciona operação atômica password_change: bloqueia usuário/sessão, compara hash anterior e sessão ativa antes de atualizar. Trigger017 revoga todas as sessões. API limpa cookie no sucesso204. Falha auxiliar ao limpar contadores não transforma uma senha já alterada em falso erro503.
+- Validação: 32 testes isolados passaram; após último ajuste de falha auxiliar, teste direcionado de senha passou novamente. TypeScript e build Vercel aprovados; Gitleaks histórico sem achados e diff sem erros. Opengrep indisponível; sem DAST/produção.
+- PostgreSQL17 descartável autorizado: 20 verificações aprovadas, migrations012..018 aplicadas duas vezes, revogação/expiração e troca de senha com credencial/sessão incorretas, rejeição de hash antigo e corrida real entre duas alterações (apenas uma aceita). Schema descartável removido; dados reais preservados.
+- Prévia isolada mobile375px sem overflow: botões32px, confirmação divergente bloqueada e retorno ao login após troca fictícia. Capturas ignoradas .local/admin-botoes-senha-mobile.png e .local/admin-trocar-senha-mobile.png. Nenhuma credencial real alterada na validação visual.
+- Checkpoint: implementação pronta. Aplicar017 (caso pendente) e018 no Supabase antes de publicar backend versão18. Migration não aplicada ao schema real local/Supabase; sem restart do backend, commit, push ou deploy. Alterações anteriores preservadas.

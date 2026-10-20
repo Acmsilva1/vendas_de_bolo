@@ -26,14 +26,17 @@ import {
   initDatabase,
   isPostgresActive,
   updateTelegramDelivery,
-  verifyAdminCredentials,
+  createAdminSession,
+  isAdminSessionValid,
+  revokeAdminSession,
+  changeAdminPassword,
   isLoginBlocked,
   registerLoginFailure,
   clearLoginFailures
 } from './_db.js';
 import { OrderStatus } from './_types.js';
 import { parseImageDataUrl } from './_image.js';
-import { createSessionToken, readCookie, verifySessionToken } from './_auth.js';
+import { createSessionToken, readCookie, verifySessionToken, sessionTokenHash } from './_auth.js';
 
 export const apiRouter = Router();
 
@@ -83,13 +86,20 @@ function loginAttemptKeys(req: Request, username: string): { key: string; limit:
   ];
 }
 
-function isAdminRequest(req: Request): boolean {
+async function isAdminRequest(req: Request): Promise<boolean> {
   const token = readCookie(req.header('cookie'), sessionCookieName());
-  return Boolean(token && verifySessionToken(token, sessionSecret()));
+  const payload = token ? verifySessionToken(token, sessionSecret()) : null;
+  return Boolean(payload && await isAdminSessionValid(payload.sub, sessionTokenHash(token)));
 }
 
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  if (!isAdminRequest(req)) {
+async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
+  let authenticated = false;
+  try { authenticated = await isAdminRequest(req); }
+  catch {
+    res.status(503).json({ error: 'Não foi possível validar a sessão administrativa.' });
+    return;
+  }
+  if (!authenticated) {
     res.status(401).json({ error: 'Acesso administrativo não autorizado.' });
     return;
   }
@@ -167,7 +177,8 @@ apiRouter.post('/auth/login', requireSameOrigin, async (req: Request, res: Respo
       return;
     }
 
-    const valid = Boolean(username && password && await verifyAdminCredentials(username, password));
+    const token = createSessionToken(username, sessionSecret(), SESSION_TTL_SECONDS);
+    const valid = await createAdminSession(username, password, sessionTokenHash(token), SESSION_TTL_SECONDS);
     if (!valid) {
       await Promise.all(attemptKeys.map(item => registerLoginFailure(item.key, item.limit)));
       res.status(401).json({ error: 'Usuário ou senha inválidos.' });
@@ -175,11 +186,14 @@ apiRouter.post('/auth/login', requireSameOrigin, async (req: Request, res: Respo
     }
 
     await Promise.all(attemptKeys.map(item => clearLoginFailures(item.key)));
-    const token = createSessionToken(username, sessionSecret(), SESSION_TTL_SECONDS);
+    const previousToken = readCookie(req.header('cookie'), sessionCookieName());
+    if (previousToken && verifySessionToken(previousToken, sessionSecret())) {
+      await revokeAdminSession(sessionTokenHash(previousToken));
+    }
     const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
     res.setHeader(
       'Set-Cookie',
-      `${sessionCookieName()}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_TTL_SECONDS}${secure}`
+      `${sessionCookieName()}=${encodeURIComponent(token)}; HttpOnly; SameSite=Strict; Path=/${secure}`
     );
     res.setHeader('Cache-Control', 'no-store');
     res.json({ authenticated: true, expiresIn: SESSION_TTL_SECONDS });
@@ -189,18 +203,60 @@ apiRouter.post('/auth/login', requireSameOrigin, async (req: Request, res: Respo
   }
 });
 
-apiRouter.get('/auth/session', (req: Request, res: Response) => {
+apiRouter.get('/auth/session', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store');
-  res.json({ authenticated: isAdminRequest(req) });
+  try { res.json({ authenticated: await isAdminRequest(req) }); }
+  catch { res.status(503).json({ authenticated: false, error: 'Não foi possível validar a sessão administrativa.' }); }
 });
 
-apiRouter.post('/auth/logout', requireAdmin, (req: Request, res: Response) => {
+apiRouter.post('/auth/logout', requireAdmin, async (req: Request, res: Response) => {
+  try {
+    await revokeAdminSession(sessionTokenHash(readCookie(req.header('cookie'), sessionCookieName())));
+  } catch {
+    res.status(503).json({ error: 'Não foi possível encerrar a sessão. Tente novamente.' });
+    return;
+  }
   const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
   res.setHeader(
     'Set-Cookie',
     `${sessionCookieName()}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`
   );
   res.status(204).end();
+});
+
+apiRouter.post('/auth/password', requireAdmin, async (req: Request, res: Response) => {
+  const { currentPassword, newPassword, confirmPassword } = req.body || {};
+  if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 256 ||
+    typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128 ||
+    typeof confirmPassword !== 'string' || newPassword !== confirmPassword || newPassword === currentPassword) {
+    res.status(400).json({ error: 'Informe a senha atual e uma nova senha diferente, de 12 a 128 caracteres, com confirmação igual.' });
+    return;
+  }
+  try {
+    const token = readCookie(req.header('cookie'), sessionCookieName());
+    const payload = verifySessionToken(token, sessionSecret());
+    if (!payload) { res.status(401).json({ error: 'Sessão inválida. Entre novamente.' }); return; }
+    const attemptKeys = loginAttemptKeys(req, 'password-change|' + payload.sub);
+    if ((await Promise.all(attemptKeys.map(item => isLoginBlocked(item.key)))).some(Boolean)) {
+      res.status(429).json({ error: 'Muitas tentativas. Aguarde 15 minutos.' }); return;
+    }
+    const result = await changeAdminPassword(payload.sub, sessionTokenHash(token), currentPassword, newPassword);
+    if (result === 'incorrect') {
+      await Promise.all(attemptKeys.map(item => registerLoginFailure(item.key, item.limit)));
+      res.status(401).json({ error: 'Senha atual incorreta.' }); return;
+    }
+    if (result === 'conflict') {
+      res.status(409).json({ error: 'A sessão ou a senha foi alterada. Entre novamente.' }); return;
+    }
+    await Promise.all(attemptKeys.map(item => clearLoginFailures(item.key))).catch(() => {
+      console.warn('Senha alterada; limpeza das tentativas de acesso indisponível.');
+    });
+    const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+    res.setHeader('Set-Cookie', `${sessionCookieName()}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0${secure}`);
+    res.status(204).end();
+  } catch {
+    res.status(503).json({ error: 'Não foi possível trocar a senha. Tente novamente.' });
+  }
 });
 
 // ==============================================================================
@@ -262,7 +318,7 @@ apiRouter.post('/cart/reservation', requireSameOrigin, async (req: Request, res:
 apiRouter.get('/cakes', async (req: Request, res: Response) => {
   try {
     res.setHeader('Cache-Control', 'no-store');
-    const onlyActive = req.query.all !== 'true' || !isAdminRequest(req);
+    const onlyActive = req.query.all !== 'true' || !(await isAdminRequest(req));
     const [cakes, store] = await Promise.all([getAllCakes(onlyActive), getStoreStatus()]);
     res.json({ cakes, store, isPostgres: isPostgresActive() });
   } catch (err) {
@@ -278,8 +334,8 @@ apiRouter.get('/cakes/:id/image', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
-    const cake = await getCakeById(id, !isAdminRequest(req));
-    if (!cake || (!cake.is_active && !isAdminRequest(req))) {
+    const cake = await getCakeById(id, !(await isAdminRequest(req)));
+    if (!cake || (!cake.is_active && !(await isAdminRequest(req)))) {
       res.status(404).json({ error: 'Imagem não encontrada.' });
       return;
     }
@@ -304,8 +360,8 @@ apiRouter.get('/cakes/:id', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
-    const cake = await getCakeById(id, !isAdminRequest(req));
-    if (!cake || (!cake.is_active && !isAdminRequest(req))) {
+    const cake = await getCakeById(id, !(await isAdminRequest(req)));
+    if (!cake || (!cake.is_active && !(await isAdminRequest(req)))) {
       res.status(404).json({ error: 'Bolo não encontrado.' });
       return;
     }

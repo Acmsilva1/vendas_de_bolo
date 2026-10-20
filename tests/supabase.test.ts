@@ -72,7 +72,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   const hash = hashPassword('test-password');
   const mock = t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
     const body = JSON.parse(String(options.body)); calls.push(body);
-    return Response.json(body.p_operation === 'health' ? { ok: true, version: 16 } : body.p_operation === 'admin_hash' ? hash
+    return Response.json(body.p_operation === 'health' ? { ok: true, version: 18 } : body.p_operation === 'admin_hash' ? hash
       : body.p_operation === 'store_get' || body.p_operation === 'store_set' ? {is_open: body.p_data.is_open ?? true,updated_at:'2026-10-20T15:00:00Z'}
       : body.p_operation === 'cake_image' ? { hex: '0102ff', mimeType: 'image/png' }
       : body.p_operation === 'cakes' || body.p_operation === 'orders' ? [] : null);
@@ -111,7 +111,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   mock.mock.mockImplementation(async () => Response.json({ ok: true }));
   const outdated = await initDatabase();
   assert.equal(outdated.isPostgres, false);
-  assert.match(outdated.message, /016_historico_reservas/);
+  assert.match(outdated.message, /018_troca_senha_admin/);
   // HTTPS errors must fail closed; never fall back to an old DATABASE_URL.
   mock.mock.mockImplementation(async () => new Response('', { status: 401 }));
   assert.equal((await initDatabase()).isPostgres, false);

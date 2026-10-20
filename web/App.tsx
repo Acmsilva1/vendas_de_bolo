@@ -156,11 +156,18 @@ export const App: React.FC = () => {
   };
 
   const handleAdminLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
-    setIsAdminAuthenticated(false);
-    setCurrentView('catalog');
-    sessionStorage.removeItem('delicias-current-view');
-    fetchCakes(false);
+    try {
+      const response = await fetch('/api/auth/logout', { method: 'POST' });
+      if (!response.ok && response.status !== 401) {
+        throw new Error('Não foi possível encerrar a sessão. Tente novamente.');
+      }
+      setIsAdminAuthenticated(false);
+      setCurrentView('catalog');
+      sessionStorage.removeItem('delicias-current-view');
+      fetchCakes(false);
+    } catch {
+      showToast('Não foi possível encerrar a sessão. Tente novamente.', 'error');
+    }
   };
 
   const handleAddToCart = async (cake: Cake, quantity: number) => {
@@ -335,6 +342,12 @@ export const App: React.FC = () => {
                 cakes={cakes}
                 onRefreshCakes={() => fetchCakes(true)}
                 onLogout={handleAdminLogout}
+                onPasswordChanged={() => {
+                  setIsAdminAuthenticated(false);
+                  setLoginPassword('');
+                  void fetchCakes(false);
+                  showToast('Senha alterada. Entre novamente com a nova senha.', 'success');
+                }}
                 onNotify={showToast}
               />
             </motion.div>
@@ -362,7 +375,7 @@ export const App: React.FC = () => {
       <footer className="border-t border-violet-100 bg-white/60 py-4 sm:py-6 text-center text-sm sm:text-xs text-slate-600">
         <div className="max-w-7xl mx-auto px-4 flex items-center justify-center">
           <p>
-            🍰 <strong className="text-pink-700 font-serif">Delícias da Jú</strong> — Bolos caseiros com estoque em tempo real e entrega no condomínio.
+            🍰 <strong className="text-pink-700 font-serif">Delícias da Jú</strong> — Bolos feitos com carinho para adoçar seu dia, com entrega no condomínio.
           </p>
         </div>
       </footer>

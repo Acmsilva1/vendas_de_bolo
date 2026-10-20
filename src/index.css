@@ -49,7 +49,7 @@ select,
 
   .mobile-cake-card {
     content-visibility: auto;
-    contain-intrinsic-size: auto 280px;
+    contain-intrinsic-size: auto 210px;
     border: 1px solid #fce7f3;
     box-shadow:
       0 4px 12px rgb(190 24 93 / 6%),
@@ -95,6 +95,10 @@ select,
   .admin-dashboard button {
     min-height: 44px;
     min-width: 44px;
+  }
+
+  .admin-dashboard .admin-header-actions > button {
+    min-height: 32px;
   }
 
   .mobile-admin-tabs {
@@ -298,4 +302,31 @@ select,
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+@media (min-width: 1024px) {
+  .catalog-shell {
+    box-sizing: border-box;
+    width: calc(100% - 10cm);
+    max-width: none;
+    min-height: 297mm;
+    margin: 1.5rem auto;
+    padding: 10mm;
+    background: #fff;
+    border: 1px solid #f3dce7;
+    border-radius: 0.5rem;
+    box-shadow: 0 12px 36px rgb(87 36 62 / 9%), 0 2px 6px rgb(87 36 62 / 5%);
+  }
+
+  .catalog-shell .catalog-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .catalog-shell .catalog-card-controls { flex-direction: column; }
+  .catalog-shell .catalog-quantity-picker { width: 100%; }
+}
+
+@media (min-width: 1440px) {
+  .catalog-shell .catalog-card-controls { flex-direction: row; }
+  .catalog-shell .catalog-quantity-picker { width: 6rem; }
 }

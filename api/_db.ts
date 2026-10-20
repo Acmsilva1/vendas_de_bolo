@@ -90,8 +90,8 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     const config = getSupabaseConfig();
     if (config) {
       const health = await supabaseRpc<{ ok: boolean; version?: number }>(config, 'health');
-      if (!health?.ok || health.version !== 16) {
-        throw new Error('Supabase HTTPS: execute a migration 016_historico_reservas.sql antes de usar este backend.');
+      if (!health?.ok || health.version !== 18) {
+        throw new Error('Supabase HTTPS: execute a migration 018_troca_senha_admin.sql antes de usar este backend.');
       }
       if (process.env.ADMIN_INITIAL_PASSWORD) {
         await supabaseRpc(config, 'ensure_admin', {
@@ -142,7 +142,7 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     usePostgres = true;
     await runSchema(pgPool, schema);
     // The local database uses the same transactional functions as HTTPS, in its own schema.
-    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql', '016_historico_reservas.sql']) {
+    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql', '016_historico_reservas.sql', '017_sessoes_admin.sql', '018_troca_senha_admin.sql']) {
       const sql = (await readFile(resolve(process.cwd(), 'migrations', name), 'utf8'))
         .replaceAll('ALTER FUNCTION public.vendas_backend(text, jsonb) SET SCHEMA vendas_de_bolo;', '')
         .replaceAll('vendas_de_bolo.vendas_backend(text, jsonb) RENAME', 'vendas_de_bolo.local_backend(text, jsonb) RENAME')
@@ -272,15 +272,45 @@ export function isPostgresActive(): boolean {
 }
 
 export async function verifyAdminCredentials(username: string, password: string): Promise<boolean> {
+  const hash = await adminPasswordHash(username);
+  return hash !== null && verifyPasswordHash(password, hash);
+}
+
+async function adminPasswordHash(username: string): Promise<string | null> {
   if (supabaseConfig) {
-    const hash = await supabaseRpc<string | null>(supabaseConfig, 'admin_hash', { username });
-    return hash !== null && verifyPasswordHash(password, hash);
+    return supabaseRpc<string | null>(supabaseConfig, 'admin_hash', { username });
   }
   const result = await requirePool().query(
     'SELECT senha_hash FROM usuarios WHERE lower(nome_usuario) = lower($1) AND ativo = TRUE LIMIT 1',
     [username]
   );
-  return result.rows.length === 1 && verifyPasswordHash(password, result.rows[0].senha_hash);
+  return result.rows[0]?.senha_hash ?? null;
+}
+
+export async function createAdminSession(username: string, password: string, tokenHash: string, ttlSeconds: number): Promise<boolean> {
+  const hash = await adminPasswordHash(username);
+  if (!hash || !verifyPasswordHash(password, hash)) return false;
+  return (await reservationRpc<boolean>('session_create', {
+    username, credential_hash: hash, token_hash: tokenHash, ttl_seconds: ttlSeconds
+  })) === true;
+}
+
+export async function isAdminSessionValid(username: string, tokenHash: string): Promise<boolean> {
+  return (await reservationRpc<boolean>('session_valid', { username, token_hash: tokenHash })) === true;
+}
+
+export async function revokeAdminSession(tokenHash: string): Promise<void> {
+  await reservationRpc('session_revoke', { token_hash: tokenHash });
+}
+
+export async function changeAdminPassword(username: string, tokenHash: string, currentPassword: string,
+  newPassword: string): Promise<'changed' | 'incorrect' | 'conflict'> {
+  const hash = await adminPasswordHash(username);
+  if (!hash || !verifyPasswordHash(currentPassword, hash)) return 'incorrect';
+  const changed = await reservationRpc<boolean>('password_change', {
+    username, token_hash: tokenHash, credential_hash: hash, new_hash: hashPassword(newPassword)
+  });
+  return changed === true ? 'changed' : 'conflict';
 }
 
 export async function isLoginBlocked(key: string): Promise<boolean> {

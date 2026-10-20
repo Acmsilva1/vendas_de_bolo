@@ -1,4 +1,8 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto';
+
+export function sessionTokenHash(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
 
 interface SessionPayload {
   sub: string;

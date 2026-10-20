@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Cake, ShoppingCart, ShieldCheck } from 'lucide-react';
+import { ShoppingCart, ShieldCheck, BookOpen } from 'lucide-react';
+import { CakePieceIcon } from './CakePieceIcon';
 import type { StoreStatus } from '../../shared/store';
 
 interface NavbarProps {
@@ -40,7 +41,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Logo & Marca Delícias da Jú */}
           <button type="button" className="flex min-w-0 items-center space-x-2 sm:space-x-3 cursor-pointer text-left" onClick={() => onViewChange('catalog')} aria-label="Ir para o cardápio">
             <div className="mobile-brand-icon w-10 h-10 sm:w-11 sm:h-11 flex-shrink-0 rounded-xl bg-pink-500/20 border border-pink-400/40 flex items-center justify-center text-pink-600 shadow-inner">
-              <Cake className="w-5 h-5 sm:w-6 sm:h-6" />
+              <CakePieceIcon className="h-7 w-7 sm:h-8 sm:w-8" />
             </div>
             <div className="min-w-0">
               <div className="flex items-center space-x-2">
@@ -93,7 +94,7 @@ export const Navbar: React.FC<NavbarProps> = ({
                     : 'text-slate-700 hover:text-slate-900 hover:bg-violet-100/60'
                 }`}
               >
-                <Cake className="w-4 h-4" />
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
                 <span className="sr-only sm:not-sr-only">Cardápio</span>
               </button>
 

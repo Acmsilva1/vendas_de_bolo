@@ -19,6 +19,7 @@ let cartFailure=0;
 let stockConflict=false;
 let storeIsOpen=true;
 const fixtureHash=hashPassword('fixture-password');
+const sessions=new Set<string>();
 const visibility=new Map([[1,true],[2,false],[3,true]]);
 const cake=(id=1)=>({id,name:'Fixture',ingredients:[],category:'comum',price:10,stock_quantity:id===3?0:5,image_url:'',is_active:visibility.get(id)??false});
 const order={id:100,order_code:'FIXTURE',customer_name:'Fixture',customer_phone:'27999990000',delivery_block:'A',delivery_apartment:'1',payment_method:'pix',total_amount:10,status:'pendente',telegram_sent:false,items:[{cake_id:1,cake_name:'Fixture',quantity:1,unit_price:10,subtotal:10}]};
@@ -26,10 +27,13 @@ globalThis.fetch=(async(input:any,options:any)=>{
  if(String(input).startsWith('http://127.0.0.1:'))return nativeFetch(input,options);
  if(!String(input).startsWith(process.env.URL_SUPABASE!))throw Error('External request blocked');
  const {p_operation:op,p_data:data}=JSON.parse(options.body);rpcCalls.push({op,data});
- if(op==='health')return Response.json({ok:true,version:16});
+ if(op==='health')return Response.json({ok:true,version:18});
  if(op==='store_get')return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});
  if(op==='store_set'){storeIsOpen=data.is_open;return Response.json({is_open:storeIsOpen,updated_at:new Date().toISOString()});}
  if(op==='admin_hash')return Response.json(data.username.toLowerCase()==='admin'?fixtureHash:null);
+ if(op==='session_create'){if(data.credential_hash!==fixtureHash)return Response.json(false);sessions.add(data.token_hash);return Response.json(true);}
+ if(op==='session_valid')return Response.json(sessions.has(data.token_hash));
+ if(op==='session_revoke'){sessions.delete(data.token_hash);return Response.json(true);}
  if(op==='login_blocked')return Response.json(false);
  if(op==='cakes'&&data.onlyActive&&!storeIsOpen)return Response.json([]);
  if(op==='cakes')return Response.json([cake(),cake(2),cake(3)].filter(c=>!data.onlyActive||c.is_active));

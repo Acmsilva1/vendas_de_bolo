@@ -1,5 +1,6 @@
 import { ITEM_CATEGORIES, ITEM_CATEGORY_LABELS } from '../../shared/categories';
 import React, { useState, useEffect } from 'react';
+import { ChangePasswordModal } from './ChangePasswordModal';
 import { motion, AnimatePresence } from 'motion/react';
 import { Cake, Order, AppStats } from '../types';
 import {
@@ -17,6 +18,7 @@ import {
   History,
   Trash2,
   LogOut,
+  KeyRound,
   ImagePlus,
   BarChart3,
   Search
@@ -26,6 +28,7 @@ interface AdminDashboardProps {
   cakes: Cake[];
   onRefreshCakes: () => void | Promise<void>;
   onLogout: () => void;
+  onPasswordChanged: () => void;
   onNotify: (message: string, type?: 'success' | 'error') => void;
 }
 
@@ -33,6 +36,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   cakes,
   onRefreshCakes,
   onLogout,
+  onPasswordChanged,
   onNotify
 }) => {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'estoque' | 'pedidos' | 'historico'>(() => {
@@ -53,6 +57,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [stats, setStats] = useState<AppStats | null>(null);
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [updatingStockId, setUpdatingStockId] = useState<number | null>(null);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   const [updatingAvailabilityId, setUpdatingAvailabilityId] = useState<number | null>(null);
 
@@ -371,27 +376,34 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex items-center space-x-2 sm:space-x-3">
+        <div className="admin-header-actions flex flex-wrap items-center gap-2">
           <button
             type="button"
             id="btn-add-new-cake"
             onClick={openNewCakeModal}
-            className="min-h-11 sm:min-h-0 flex-1 sm:flex-none py-2.5 px-4 rounded-xl bg-pink-600 hover:bg-pink-500 text-white text-sm sm:text-xs font-semibold transition-all flex items-center justify-center space-x-2 shadow-md cursor-pointer"
+            className="h-8 px-2.5 rounded-lg bg-pink-600 hover:bg-pink-500 text-white text-xs font-semibold transition-all flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5" />
             <span>Novo item</span>
           </button>
 
+          <button type="button" onClick={() => setIsPasswordModalOpen(true)}
+            className="h-8 px-2.5 rounded-lg bg-white hover:bg-violet-50 text-slate-700 border border-violet-200 flex items-center gap-1.5 text-xs font-medium">
+            <KeyRound className="w-3.5 h-3.5" />
+            <span>Trocar senha</span>
+          </button>
           <button
             type="button"
             onClick={onLogout}
-            className="min-h-11 sm:min-h-0 p-2.5 rounded-xl bg-white hover:bg-violet-50 text-slate-700 transition-colors border border-violet-200 flex items-center space-x-2 text-sm sm:text-xs font-medium cursor-pointer"
+            className="h-8 px-2.5 rounded-lg bg-white hover:bg-violet-50 text-slate-700 transition-colors border border-violet-200 flex items-center gap-1.5 text-xs font-medium cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
             <span>Sair</span>
           </button>
         </div>
       </div>
+
+      {isPasswordModalOpen && <ChangePasswordModal onClose={() => setIsPasswordModalOpen(false)} onChanged={() => { setIsPasswordModalOpen(false); onPasswordChanged(); }} />}
 
       {/* Cards de métricas de estoque */}
       <div className="grid grid-cols-3 gap-1.5 sm:gap-4 mb-3 sm:mb-6">
