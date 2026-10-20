@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { KeyRound, X } from 'lucide-react';
+import { validNewAdminPassword, ADMIN_PASSWORD_MIN, ADMIN_PASSWORD_MAX, ADMIN_PASSWORD_HELP } from '../../shared/admin-password';
 
 interface Props {
   onClose: () => void;
@@ -25,6 +26,10 @@ export function ChangePasswordModal({ onClose, onChanged }: Props) {
     event.preventDefault();
     if (busy) return;
     setError('');
+    if (!validNewAdminPassword(newPassword)) {
+      setError(ADMIN_PASSWORD_HELP);
+      return;
+    }
     if (newPassword !== confirmPassword) {
       setError('A confirmação deve ser igual à nova senha.');
       return;
@@ -70,11 +75,11 @@ export function ChangePasswordModal({ onClose, onChanged }: Props) {
           <input type="password" autoComplete="current-password" autoFocus required maxLength={256} value={currentPassword} disabled={busy} onChange={event => setCurrentPassword(event.target.value)} className={`${inputClass} mt-1`} />
         </label>
         <label className="block text-xs font-medium">Nova senha
-          <input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={newPassword} disabled={busy} onChange={event => setNewPassword(event.target.value)} aria-describedby="new-password-help" className={`${inputClass} mt-1`} />
+          <input type="password" autoComplete="new-password" required minLength={ADMIN_PASSWORD_MIN} maxLength={ADMIN_PASSWORD_MAX} value={newPassword} disabled={busy} onChange={event => setNewPassword(event.target.value)} aria-describedby="new-password-help" className={`${inputClass} mt-1`} />
         </label>
-        <p id="new-password-help" className="text-[11px] text-slate-500">Use de 12 a 128 caracteres. Prefira uma frase longa e exclusiva.</p>
+        <p id="new-password-help" className="text-[11px] text-slate-500">{ADMIN_PASSWORD_HELP}</p>
         <label className="block text-xs font-medium">Confirmar nova senha
-          <input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={confirmPassword} disabled={busy} onChange={event => setConfirmPassword(event.target.value)} className={`${inputClass} mt-1`} />
+          <input type="password" autoComplete="new-password" required minLength={ADMIN_PASSWORD_MIN} maxLength={ADMIN_PASSWORD_MAX} value={confirmPassword} disabled={busy} onChange={event => setConfirmPassword(event.target.value)} className={`${inputClass} mt-1`} />
         </label>
         {error && <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{error}</p>}
         <div className="flex justify-end gap-2 pt-1">

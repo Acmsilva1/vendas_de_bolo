@@ -2,6 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { once } from 'node:events';
 import { hashPassword, verifyPasswordHash } from '../api/_db.js';
+import { validNewAdminPassword } from '../shared/admin-password.js';
+
+test('nova senha aceita 6 a 10 caracteres e exige símbolo, não apenas espaços ou letras acentuadas', () => {
+  for (const value of ['Ab!123', 'Ab!1234567', ' ab!12 ']) assert.equal(validNewAdminPassword(value), true);
+  for (const value of ['Ab!12', 'Ab!12345678', 'abcdef', 'ábc123', 'abc 12', null, 123456]) {
+    assert.equal(validNewAdminPassword(value), false);
+  }
+});
 
 test('troca de senha exige sessão, origem, senha atual e CAS; revoga todas as sessões', async () => {
   process.env.NODE_ENV = 'production';
@@ -55,7 +63,7 @@ test('troca de senha exige sessão, origem, senha atual e CAS; revoga todas as s
     method: 'POST', headers: { origin: base, 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'Admin', password })
   });
-  const valid = { currentPassword: 'old-fixture-password', newPassword: ' new-fixture-password ', confirmPassword: ' new-fixture-password ', username: 'Attacker' };
+  const valid = { currentPassword: 'old-fixture-password', newPassword: ' ab!12 ', confirmPassword: ' ab!12 ', username: 'Attacker' };
   const change = (cookie: string, body: any = valid, origin = base) => request('/auth/password', {
     method: 'POST', headers: { origin, cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body)
   });
@@ -65,8 +73,9 @@ test('troca de senha exige sessão, origem, senha atual e CAS; revoga todas as s
     const cookie = (await login()).headers.get('set-cookie')!.split(';')[0];
     const secondCookie = (await login()).headers.get('set-cookie')!.split(';')[0];
     assert.equal((await change(cookie, valid, 'https://hostile.invalid')).status, 403);
-    for (const body of [{}, { ...valid, newPassword: 'short', confirmPassword: 'short' },
-      { ...valid, newPassword: 'x'.repeat(129), confirmPassword: 'x'.repeat(129) },
+    for (const body of [{}, { ...valid, newPassword: 'Ab!12', confirmPassword: 'Ab!12' },
+      { ...valid, newPassword: 'Ab!12345678', confirmPassword: 'Ab!12345678' },
+      { ...valid, newPassword: 'abcdef', confirmPassword: 'abcdef' },
       { ...valid, confirmPassword: 'different' }, { ...valid, newPassword: valid.currentPassword, confirmPassword: valid.currentPassword },
       { ...valid, currentPassword: 'x'.repeat(257) }]) assert.equal((await change(cookie, body)).status, 400);
     assert.equal((await change(cookie, { ...valid, currentPassword: 'incorrect' })).status, 401);

@@ -553,3 +553,30 @@ Validação em fixture local:1920px com quatro colunas (~350px por card);1280px 
 - PostgreSQL17 descartável autorizado: 20 verificações aprovadas, migrations012..018 aplicadas duas vezes, revogação/expiração e troca de senha com credencial/sessão incorretas, rejeição de hash antigo e corrida real entre duas alterações (apenas uma aceita). Schema descartável removido; dados reais preservados.
 - Prévia isolada mobile375px sem overflow: botões32px, confirmação divergente bloqueada e retorno ao login após troca fictícia. Capturas ignoradas .local/admin-botoes-senha-mobile.png e .local/admin-trocar-senha-mobile.png. Nenhuma credencial real alterada na validação visual.
 - Checkpoint: implementação pronta. Aplicar017 (caso pendente) e018 no Supabase antes de publicar backend versão18. Migration não aplicada ao schema real local/Supabase; sem restart do backend, commit, push ou deploy. Alterações anteriores preservadas.
+
+### Diagnóstico parcial de login Vercel — 2026-10-20
+- Usuário confirmou falha no site publicado; captura mostra HTTP503 em /api/auth/session e /api/auth/login, sem evidência de CORS.
+- Consulta pública via navegador a https://vendas-de-bolo.vercel.app/api/health retornou status ok e database PostgreSQL (Ativo), timestamp2026-10-20T18:36:30.388Z. Isso confirma conexão básica, não a versão de deploy nem operações de sessão.
+- Mensagem genérica de login corresponde ao catch da rota. Causa específica ainda não comprovada; solicitado apenas erro do servidor após Erro no login administrativo nos logs Vercel, sem credenciais.
+- Não foi testado login com credencial real nem alterado Supabase, secrets ou deploy. Backend local5188 não respondeu, sem relação comprovada com falha da Vercel. Checkpoint: aguardando log para determinar correção; não assumir senha errada, CORS ou migration pendente.
+
+### Evidência específica do login publicado — 2026-10-20
+- Log fornecido pelo usuário: Supabase HTTP400 durante reservationRpc→createAdminSession, depois de adminPasswordHash/verifyPasswordHash. Assim, nessa tentativa, a credencial foi validada e o erro ocorreu na operação session_create.
+- Hipótese ainda não comprovada: cadeia RPC de migrations fora de ordem/versão sem tratamento de session_create. Health ativo sozinho não demonstra capacidade de criar sessões; 018 sobre uma cadeia sem017 pode anunciar18 sem suportar sessões.
+- Próximo diagnóstico somente leitura solicitado no SQL Editor: public.vendas_backend('session_valid', jsonb_build_object('username','diagnostico','token_hash',repeat('0',64))). Retorno false confirma execução da consulta; exceção mostrará erro SQL real sem cadastrar sessão ou expor senha.
+- Checkpoint: aguardando erro SQL específico antes de prescrever reaplicação de migrations ou correção da cadeia. Sem alteração de dados, credenciais ou deploy.
+
+### Reparo da cadeia RPC de sessões — 2026-10-20
+- Causa comprovada pelo stack SQL do usuário: session_valid atravessa public.vendas_backend→vendas_backend_v17 (corpo da016)→v15→v14→v13→base, que lança P0001 Operacao nao permitida. A camada da017 não participa da cadeia. A018 podia anunciar health18 sem confirmar essa camada.
+- Criada019_reparar_cadeia_sessoes.sql: cria estruturas017 ausentes e reconstrói explicitamente v16(auditoria016), v17(sessões017) e a entrada pública018(troca de senha), sem capturar/renomear funções dependentes do estado incorreto. Mantém health18 para compatibilidade com backend publicado.
+- RLS e grants privados preservados; apenas service_role executa entrada pública. Não redefine usuário/senha nem apaga dados/sessões. Exige base016 existente e executa em transação. Inicializador local inclui019 ao fim da sequência.
+- Reprodução autorizada no PostgreSQL17 descartável:012..016+018, sem017, health18 e session_valid exatamente P0001;019 aplicada duas vezes corrigiu.23 verificações passaram, incluindo sessões, logout/revogação e troca de senha/concorrência. Caminho regular012..019 também aplicado duas vezes:20 verificações passaram. Schemas descartáveis removidos.
+-32 testes isolados, TypeScript e diff check aprovados. Build frontend não repetido porque este reparo é SQL, sem alteração de interface. Sem teste/deploy/execução de SQL em produção.
+- Checkpoint: usuário deve executar o arquivo019 completo no Supabase. Reparo SQL mantém compatibilidade com o backend18 publicado; não requer novo deploy para corrigir essa cadeia. Validação de login real ainda pendente após execução pelo usuário.
+
+### Regra de nova senha solicitada pelo usuário — 2026-10-20
+- Alterada para6..10 caracteres, exigindo ao menos um caractere especial (interpretado como símbolo, exemplo!,@,#). Letras Unicode, números e espaços não atendem sozinhos à exigência de símbolo. Senha não recebe trim.
+- Validação e texto centralizados em shared/admin-password.ts, consumidos pela API e formulário; confirmação, senha atual, scrypt, rate limit e revogação de sessões preservados. Senhas existentes continuam válidas no login; regra se aplica à troca.
+- Testes direcionados:3 aprovados, incluindo limites6/10, rejeição5/11, ausência de símbolo, acentos/espaços e fluxo de troca/revogação. Sem acesso a banco real nesta etapa.
+- Checkpoint: sem nova migration; precisa deploy para refletir alteração publicada. Nenhuma senha real alterada, sem commit/push/deploy.
+- TypeScript, build Vercel e diff check também aprovados.

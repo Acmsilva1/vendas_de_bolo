@@ -142,7 +142,7 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     usePostgres = true;
     await runSchema(pgPool, schema);
     // The local database uses the same transactional functions as HTTPS, in its own schema.
-    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql', '016_historico_reservas.sql', '017_sessoes_admin.sql', '018_troca_senha_admin.sql']) {
+    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql', '015_status_loja.sql', '016_historico_reservas.sql', '017_sessoes_admin.sql', '018_troca_senha_admin.sql', '019_reparar_cadeia_sessoes.sql']) {
       const sql = (await readFile(resolve(process.cwd(), 'migrations', name), 'utf8'))
         .replaceAll('ALTER FUNCTION public.vendas_backend(text, jsonb) SET SCHEMA vendas_de_bolo;', '')
         .replaceAll('vendas_de_bolo.vendas_backend(text, jsonb) RENAME', 'vendas_de_bolo.local_backend(text, jsonb) RENAME')

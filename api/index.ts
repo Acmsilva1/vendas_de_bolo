@@ -1,4 +1,5 @@
 import { isItemCategory } from '../shared/categories.js';
+import { validNewAdminPassword, ADMIN_PASSWORD_HELP } from '../shared/admin-password.js';
 import { createHmac, randomBytes } from 'crypto';
 import { positiveId, finiteNumber, validOrderItems, validIdempotencyKey, validReservationToken, MAX_PRICE, MAX_STOCK } from './_validation.js';
 import { databaseReadiness } from './_database-ready.js';
@@ -227,9 +228,9 @@ apiRouter.post('/auth/logout', requireAdmin, async (req: Request, res: Response)
 apiRouter.post('/auth/password', requireAdmin, async (req: Request, res: Response) => {
   const { currentPassword, newPassword, confirmPassword } = req.body || {};
   if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 256 ||
-    typeof newPassword !== 'string' || newPassword.length < 12 || newPassword.length > 128 ||
+    !validNewAdminPassword(newPassword) ||
     typeof confirmPassword !== 'string' || newPassword !== confirmPassword || newPassword === currentPassword) {
-    res.status(400).json({ error: 'Informe a senha atual e uma nova senha diferente, de 12 a 128 caracteres, com confirmação igual.' });
+    res.status(400).json({ error: `Informe a senha atual e confirme uma nova senha diferente. ${ADMIN_PASSWORD_HELP}` });
     return;
   }
   try {
