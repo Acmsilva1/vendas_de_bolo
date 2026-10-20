@@ -72,7 +72,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   const hash = hashPassword('test-password');
   const mock = t.mock.method(globalThis, 'fetch', async (_url: string, options: RequestInit) => {
     const body = JSON.parse(String(options.body)); calls.push(body);
-    return Response.json(body.p_operation === 'health' ? { ok: true, version: 13 } : body.p_operation === 'admin_hash' ? hash
+    return Response.json(body.p_operation === 'health' ? { ok: true, version: 14 } : body.p_operation === 'admin_hash' ? hash
       : body.p_operation === 'cake_image' ? { hex: '0102ff', mimeType: 'image/png' }
       : body.p_operation === 'cakes' || body.p_operation === 'orders' ? [] : null);
   });
@@ -87,7 +87,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   await updateCake(1, { price: 12 });
   await updateStock(1, 5, 'ajuste');
   await deleteCake(1);
-  await createOrder({ customer_name: 'Teste', customer_phone: '000', delivery_block: 'A', delivery_apartment: '1', payment_method: 'pix', items: [{ cake_id: 1, quantity: 2 }], idempotency_key: 'fixture-order-0001', rate_key: 'a'.repeat(64) });
+  await createOrder({ customer_name: 'Teste', customer_phone: '000', delivery_block: 'A', delivery_apartment: '1', payment_method: 'pix', items: [{ cake_id: 1, quantity: 2 }], idempotency_key: 'fixture-order-0001', rate_key: 'a'.repeat(64), reservation_token: 't'.repeat(43), reservation_version: 0 });
   await getAllOrders('month-2');
   await updateOrderStatus(1, 'confirmado');
   await deleteOrder(1);
@@ -105,7 +105,7 @@ test('repositorio HTTPS prioriza URL_SUPABASE, valida senha no backend e preserv
   mock.mock.mockImplementation(async () => Response.json({ ok: true }));
   const outdated = await initDatabase();
   assert.equal(outdated.isPostgres, false);
-  assert.match(outdated.message, /013_pedidos_seguros/);
+  assert.match(outdated.message, /014_reservas_temporarias/);
   // HTTPS errors must fail closed; never fall back to an old DATABASE_URL.
   mock.mock.mockImplementation(async () => new Response('', { status: 401 }));
   assert.equal((await initDatabase()).isPostgres, false);

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { CartItem, Order } from '../types';
+import { reservationClock } from '../reservations';
 import { pendingOrderKey, clearPendingOrder } from '../orderRequest';
 import { createOrderPdf } from '../orderPdf';
 import { X, Send, ShoppingCart, Trash2, CheckCircle, MapPin, Phone, User, FileText, Download, CreditCard, Copy, Minus, Plus, ArrowLeft } from 'lucide-react';
@@ -12,6 +13,12 @@ interface OrderModalProps {
   onRemoveItem: (cakeId: number) => void;
   onUpdateQuantity: (cakeId: number, qty: number) => void;
   onOrderSuccess: (order: Order) => void;
+  reservationBusy?: boolean;
+  reservationNow?: number;
+  reservationVersion?: number;
+  cartToken?: string;
+  onRenewItem?: (item: CartItem) => void;
+  onRefreshReservation?: () => Promise<void>;
 }
 
 const PIX_KEY = '11738647765';
@@ -53,7 +60,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
   cart,
   onRemoveItem,
   onUpdateQuantity,
-  onOrderSuccess
+  onOrderSuccess, reservationBusy = false, reservationNow = Date.now(), reservationVersion = 0, cartToken = '', onRenewItem, onRefreshReservation
 }) => {
   const [customerName, setCustomerName] = useState('');
   const [customerPhone, setCustomerPhone] = useState('');
@@ -65,13 +72,15 @@ export const OrderModal: React.FC<OrderModalProps> = ({
 
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
+  const [retryUncertain, setRetryUncertain] = useState(false);
   const [submittedOrder, setSubmittedOrder] = useState<Order | null>(null);
   const [mobileStep, setMobileStep] = useState<1 | 2>(1);
-  const requestRef = useRef<{ payload: string; key: string } | null>(null);
+  const requestRef = useRef<{ payload: string; key: string; token: string } | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   const handleResetAndClose = useCallback(() => {
+    if (requestRef.current) { onClose(); return; }
     setSubmittedOrder(null);
     setCustomerName('');
     setCustomerPhone('');
@@ -129,9 +138,14 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     };
   }, [handleResetAndClose, isOpen]);
 
+  useEffect(() => {
+    if (!cart.some(item => item.status !== 'expired')) setMobileStep(1);
+  }, [cart]);
+
   if (!isOpen) return null;
 
-  const totalAmount = cart.reduce((sum, item) => sum + item.cake.price * item.quantity, 0);
+  const activeCart = cart.filter(item => item.status !== 'expired');
+  const totalAmount = activeCart.reduce((sum, item) => sum + item.cake.price * item.quantity, 0);
   const emptyCartTips = [
     'Que tal experimentar o Bolo de Fubá? É simples, caseiro e combina com qualquer café.',
     'O Bolo de Laranja é uma escolha leve e perfumada para adoçar o dia.',
@@ -144,24 +158,26 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     e.preventDefault();
     setErrorMessage('');
 
-    if (!customerName.trim() || !customerPhone.trim()) {
+    const recovering = Boolean(retryUncertain && requestRef.current);
+    if (!recovering && (!customerName.trim() || !customerPhone.trim())) {
       setErrorMessage('Por favor, informe seu nome e telefone para contato.');
       return;
     }
 
     const phoneDigits = customerPhone.replace(/\D/g, '');
-    if (!/^27\d{8,9}$/.test(phoneDigits)) {
+    if (!recovering && !/^27\d{8,9}$/.test(phoneDigits)) {
       setErrorMessage('Informe um WhatsApp válido do Espírito Santo com DDD 27.');
       return;
     }
 
-    if (!deliveryBlock.trim() || !deliveryApartment.trim()) {
+    if (!recovering && (!deliveryBlock.trim() || !deliveryApartment.trim())) {
       setErrorMessage('Por favor, informe o bloco e o apartamento.');
       return;
     }
 
-    if (cart.length === 0) {
-      setErrorMessage('Sua sacola está vazia.');
+    if (reservationBusy || isLoading) return;
+    if (activeCart.length === 0 && !requestRef.current) {
+      setErrorMessage('Nenhum item com reserva ativa. Volte à sacola para reservar novamente.');
       return;
     }
 
@@ -175,37 +191,42 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         delivery_apartment: deliveryApartment.trim(),
         notes: notes.trim(),
         payment_method: paymentMethod,
-        items: cart.map(item => ({
+        reservation_version: reservationVersion,
+        items: activeCart.map(item => ({
           cake_id: item.cake.id,
           quantity: item.quantity
         }))
       };
 
-      const body = JSON.stringify(payload);
-      if (requestRef.current?.payload !== body) {
+      if (!recovering) {
+        const body = JSON.stringify(payload);
         const key = await pendingOrderKey(body);
-        requestRef.current = { payload: body, key };
+        requestRef.current = { payload: body, key, token: cartToken };
       }
-      const key = requestRef.current.key;
+      const { payload: body, key, token: requestToken } = requestRef.current!;
       const res = await fetch('/api/orders', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key },
+        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': key, 'X-Cart-Token': requestToken },
         body
       });
 
       const data = await res.json();
 
       if (!res.ok || !data.order) {
+        if (res.status >= 400 && res.status < 500) { requestRef.current = null; clearPendingOrder(); }
         throw new Error(data.error || 'Falha ao registrar pedido.');
       }
 
       requestRef.current = null;
       clearPendingOrder();
+      setRetryUncertain(false);
       setSubmittedOrder(data.order);
       onOrderSuccess(data.order);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Erro ao processar pedido.';
       setErrorMessage(msg);
+      setRetryUncertain(Boolean(requestRef.current));
+      void onRefreshReservation?.();
     } finally {
       setIsLoading(false);
     }
@@ -349,7 +370,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600 mb-2.5">
                   <span className="flex items-center gap-2">
                     <ShoppingCart className="w-4 h-4 text-pink-600" />
-                    Carrinho ({cart.length})
+                    Sacola ({activeCart.length} {activeCart.length === 1 ? 'ativo' : 'ativos'})
                   </span>
                 </h3>
 
@@ -365,7 +386,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                   {cart.map(item => (
                     <div
                       key={item.cake.id}
-                      className="mobile-cart-item relative flex items-center justify-between p-2 rounded-xl bg-violet-50/60 border border-violet-200/60"
+                      className={`mobile-cart-item relative flex items-center justify-between p-2 rounded-xl border ${item.status === 'expired' ? 'bg-red-50 border-red-200' : 'bg-violet-50/60 border-violet-200/60'}`}
                     >
                       <div className="mobile-cart-info flex items-center space-x-2.5 overflow-hidden">
                         <img
@@ -377,17 +398,25 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                           decoding="async"
                         />
                         <div className="truncate">
-                          <p className="text-xs font-semibold text-slate-800 truncate">
+                          <p className={`text-xs font-semibold truncate ${item.status === 'expired' ? 'text-red-700 line-through decoration-red-600 decoration-2' : 'text-slate-800'}`}>
                             {item.cake.name}
                           </p>
                           <p className="text-xs text-slate-600">
                             {item.quantity}x • R$ {item.cake.price.toFixed(2).replace('.', ',')}
                           </p>
+                          {item.expires_at && (
+                            <p className={`mt-0.5 text-[11px] tabular-nums font-semibold ${item.status === 'expired' ? 'text-red-700' : 'text-amber-800'}`}>
+                              {item.status === 'expired' ? 'Expirou • não será comprado' : `Reservado por ${reservationClock(item.expires_at, reservationNow)}`}
+                            </p>
+                          )}
+                          {item.status === 'expired' && onRenewItem && (
+                            <button type="button" disabled={reservationBusy || isLoading} onClick={() => onRenewItem(item)} className="mt-1 text-[11px] font-semibold text-pink-700 underline disabled:opacity-40">Reservar novamente</button>
+                          )}
                           <div className="mt-1 flex items-center gap-1 sm:hidden" aria-label={`Quantidade de ${item.cake.name}`}>
                             <button
                               type="button"
                               onClick={() => onUpdateQuantity(item.cake.id, item.quantity - 1)}
-                              disabled={item.quantity <= 1}
+                              disabled={item.quantity <= 1 || item.status === 'expired' || reservationBusy || isLoading}
                               aria-label={`Diminuir quantidade de ${item.cake.name}`}
                               className="h-9 w-9 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
                             >
@@ -397,7 +426,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                             <button
                               type="button"
                               onClick={() => onUpdateQuantity(item.cake.id, item.quantity + 1)}
-                              disabled={item.quantity >= item.cake.stock_quantity}
+                              disabled={item.quantity >= item.cake.stock_quantity || item.status === 'expired' || reservationBusy || isLoading}
                               aria-label={`Aumentar quantidade de ${item.cake.name}`}
                               className="h-9 w-9 rounded-lg border border-violet-200 bg-white text-slate-700 disabled:opacity-40"
                             >
@@ -408,12 +437,13 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                       </div>
 
                       <div className="mobile-cart-actions flex items-center space-x-3 flex-shrink-0">
-                        <span className="text-xs font-bold text-pink-700">
+                        <span className={`text-xs font-bold ${item.status === 'expired' ? 'text-red-700 line-through decoration-red-600' : 'text-pink-700'}`}>
                           R$ {(item.cake.price * item.quantity).toFixed(2).replace('.', ',')}
                         </span>
                         <button
                           type="button"
                           onClick={() => onRemoveItem(item.cake.id)}
+                          disabled={reservationBusy || isLoading}
                           aria-label={`Remover ${item.cake.name} do carrinho`}
                           className="min-h-11 min-w-11 sm:min-h-0 sm:min-w-0 p-1 text-slate-500 hover:text-red-400 transition-colors"
                         >
@@ -425,13 +455,22 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 </div>
                 )}
 
+                {retryUncertain && (
+                  <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                    {errorMessage && <p role="alert" className="mb-1">{errorMessage}</p>}
+                    <p>A resposta do pedido não foi confirmada. Verifique antes de iniciar outra compra.</p>
+                    <button type="submit" formNoValidate disabled={isLoading || reservationBusy} className="mt-1 min-h-9 font-semibold underline">{isLoading ? 'Verificando...' : 'Verificar confirmação do pedido'}</button>
+                  </div>
+                )}
+                {cart.some(item => item.status === 'expired') && <p className="mt-2 text-xs text-red-700">Itens riscados foram liberados para a loja e não entram no total. Você pode concluir com os demais.</p>}
+                <p className="mt-2 text-[11px] text-slate-500">Cada produto fica reservado por 10 minutos. Alterar a quantidade não reinicia o prazo.</p>
                 <div className="flex justify-between items-center pt-3 mt-2 border-t border-violet-100 text-sm">
                   <span className="text-slate-600">Total do Pedido:</span>
                   <span className="text-lg font-serif font-bold text-pink-700">
                     R$ {totalAmount.toFixed(2).replace('.', ',')}
                   </span>
                 </div>
-                {cart.length > 0 && (
+                {activeCart.length > 0 && (
                   <button
                     type="button"
                     onClick={() => setMobileStep(2)}
@@ -442,7 +481,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                 )}
               </div>
 
-              {cart.length > 0 && (
+              {activeCart.length > 0 && (
                 <div className={`mobile-checkout-details ${mobileStep === 2 ? 'space-y-3' : 'hidden'}`}>
                   <button
                     type="button"
@@ -452,7 +491,8 @@ export const OrderModal: React.FC<OrderModalProps> = ({
                     <ArrowLeft className="h-4 w-4" />
                     Voltar para a sacola
                   </button>
-                  <p className="text-right text-sm font-semibold text-pink-700 -mt-9 mb-3 pointer-events-none">Total: R$ {totalAmount.toFixed(2).replace('.', ',')}</p>
+                  {cart.some(item => item.status === 'expired') && <p className="rounded-lg bg-red-50 p-2 text-xs text-red-700">Uma reserva expirou. O total inclui apenas os itens ainda reservados.</p>}
+                  <p className="text-right text-sm font-semibold text-pink-700 mb-3 pointer-events-none">Total: R$ {totalAmount.toFixed(2).replace('.', ',')}</p>
                   <div className="rounded-xl border border-pink-100 bg-pink-50/50 p-2.5">
                     <label className="block text-xs text-slate-700 mb-1 flex items-center space-x-1.5">
                       <CreditCard className="w-3 h-3 text-pink-600" />
@@ -575,7 +615,7 @@ export const OrderModal: React.FC<OrderModalProps> = ({
         </div>
         {!submittedOrder && cart.length > 0 && mobileStep === 2 && (
           <div className="shrink-0 border-t border-violet-100 bg-white px-3 pt-2 pb-[max(.625rem,env(safe-area-inset-bottom))] sm:px-4">
-            <button type="submit" form="checkout-order-form" id="btn-confirm-order-submit" disabled={isLoading}
+            <button type="submit" form="checkout-order-form" id="btn-confirm-order-submit" disabled={isLoading || reservationBusy || activeCart.length === 0}
               className="flex min-h-10 w-full items-center justify-center gap-2 rounded-xl bg-pink-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-pink-500 disabled:opacity-50">
               <Send className="h-4 w-4" />
               {isLoading ? 'Confirmando reserva...' : 'Confirmar reserva'}

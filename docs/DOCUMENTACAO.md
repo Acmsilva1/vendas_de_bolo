@@ -408,3 +408,28 @@ Finalização dividida em sacola e entrega/pagamento também no desktop. Janela 
 Navegador local conferiu app com item real sem enviar pedido e fixture ignorada com 20 produtos fictícios: desktop 1280x720, mobile 375x812 e 320x568. Lista com 20 itens ficou 182px em 320x568 para conteúdo 1906px, sem overflow horizontal; etapa de entrega mantém confirmação no rodapé e rolagem só no corpo em telas curtas. Retorno à sacola preservou nome digitado; botão externo permanece associado ao form checkout-order-form. Nenhuma reserva, notificação ou gravação real enviada. Evidência privada: .local/checkout-mobile-compacto.png. Checkpoint: base 1c35d1a, alterações locais preservadas, sem commit/push/deploy.
 
 Validação final desta etapa: 27 testes aprovados, TypeScript e build Vercel aprovados.
+
+
+### Cards compactos no catálogo — 2026-10-20
+
+Reduzidos foto, espaçamento e altura dos cards em CakeCatalog.tsx. Foto de 80px no mobile e 96px no desktop; nome/preço e controles compactos, quantidade e botão lado a lado no desktop e ingredientes disponíveis por ícone com rótulo acessível. Categoria redundante sobre a foto removida, filtros e contagens preservados. Não altera preço, estoque, categorias ou lógica do carrinho.
+
+Navegador local: card desktop 1280x720 com altura 213,65px/foto 96px; mobile 375x812 com foto 80px e sem overflow horizontal. Abrir ingredientes exibiu conteúdo; aumentar quantidade e adicionar incluiu 2 unidades, total 40,00, sem criar pedido ou gravar dados. Viewport restaurado. Checkpoint: alterações locais sem commit/push/deploy pelo agente.
+
+TypeScript e build Vercel aprovados. Base Git observada: 0fa26f2.
+
+### Reservas temporárias por produto — 2026-10-20
+
+Cada produto passa a ocupar estoque ao entrar na sacola por 10 minutos, com prazo individual definido pelo relógio do banco. Alterar quantidade não estende o prazo. Ao vencer, a linha permanece riscada em vermelho e deixa de entrar no total; o cliente pode finalizar os demais produtos ou solicitar explicitamente nova reserva, sujeita à disponibilidade. Remover um item libera sua reserva. Fechar a página deixa o prazo correr; não há renovação automática.
+
+Migration incremental: migrations/014_reservas_temporarias.sql, após 012 e 013. Cria carrinhos_reserva/reservas_carrinho privados, com RLS e sem acesso direto por anon/authenticated, e atualiza vendas_backend para versão 14. Estoque físico só diminui na confirmação; disponibilidade pública desconta reservas ainda válidas, sem depender de cron. Linhas de produtos são bloqueadas em ordem crescente e a versão da sacola evita sobrescritas. Admin recebe HTTP 409 ao reduzir estoque abaixo do reservado. Token aleatório de 32 bytes fica na sessão do navegador, trafega em X-Cart-Token e somente seu SHA-256 é persistido; POST exige mesma origem e há limite de alterações por IP. A verificação do limite precede a criação de novas sacolas. API, frontend e migration precisam ser publicados em conjunto.
+
+Contador atualiza a cada segundo com compensação do horário do servidor. Sacola/vitrine consultam o backend a cada 3 segundos quando visíveis e ao recuperar foco; outras pessoas podem levar até essa consulta para visualizar o novo saldo, embora a transação impeça reservar a mesma unidade. Reserva vencida é liberada logicamente na consulta/transação, mesmo com página fechada. Registros vencidos são mantidos para a apresentação da sacola; não foi criado job de limpeza histórica.
+
+A confirmação usa idempotência vinculada ao token e inclui somente reservas válidas. Se a resposta se perde depois de salvar, a interface mantém corpo, token e chave originais em memória para verificar o mesmo pedido, mesmo com sacola já alterada pelo polling. Recarregar a página perde esse corpo de recuperação; nenhum dado pessoal do pedido é armazenado no navegador por esta implementação.
+
+Validação: 30 testes automatizados aprovados, incluindo regras do cronômetro e sondagens HTTP com mocks para origem, token, versão, renovação, limite de alterações, hash do token e conflito administrativo. TypeScript e build Vercel aprovados. PostgreSQL 17 local: 14 grupos de testes em transação com rollback; adicionalmente 12 disputas reais entre duas conexões pela última unidade e 12 confirmações duplicadas simultâneas, todas com uma reserva vencedora, um pedido e uma baixa. Inicialização real de _db executada duas vezes em schema descartável confirmou instalação local da RPC, preservação da reserva e saldo correto. Schemas descartáveis e funções públicas exclusivas desses testes foram removidos; dados da loja não foram alterados.
+
+Navegador com fixture isolada, sem serviços reais: mobile 375x812 confirmou item vencido riscado, total só dos ativos, finalização de um produto válido e recuperação da resposta perdida após o pedido fictício já estar salvo e a sacola vazia. Evidência privada ignorada: .local/reservas-mobile.png. Não foi feita reserva, pedido, alteração de schema ou deploy no Supabase/Vercel. Checkpoint: base 0fa26f2, alterações locais sem commit/push/deploy pelo agente.
+
+Conferência adicional em 320x568: cronômetro curto da fixture expirou automaticamente, passou a dois itens riscados/total zero e removeu a ação de continuar; renovação explícita restaurou 10:00 e total apenas daquele produto. scrollWidth/clientWidth iguais a 320, sem overflow horizontal. Gitleaks nas alterações rastreadas e nos novos arquivos: nenhum segredo detectado. Opengrep não instalado; não foi executado DAST nem teste de produção.

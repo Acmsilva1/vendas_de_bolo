@@ -52,6 +52,8 @@ export interface AppStats {
 }
 
 export interface CartItem {
+  expires_at?: string;
+  status?: 'active' | 'expired';
   cake: Cake;
   quantity: number;
 }

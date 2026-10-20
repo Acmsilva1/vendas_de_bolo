@@ -1,10 +1,12 @@
 import { isItemCategory } from '../shared/categories.js';
 import { createHmac, randomBytes } from 'crypto';
-import { positiveId, finiteNumber, validOrderItems, validIdempotencyKey, MAX_PRICE, MAX_STOCK } from './_validation.js';
+import { positiveId, finiteNumber, validOrderItems, validIdempotencyKey, validReservationToken, MAX_PRICE, MAX_STOCK } from './_validation.js';
 import { databaseReadiness } from './_database-ready.js';
 import { whatsappGreeting } from './_greeting.js';
 import express, { Router, Request, Response, NextFunction } from 'express';
 import {
+  getCartReservation,
+  setCartReservation,
   getAllCakes,
   getCakeById,
   getCakeImage,
@@ -203,9 +205,46 @@ apiRouter.post('/auth/logout', requireAdmin, (req: Request, res: Response) => {
 // ROTAS DE BOLOS (CATÁLOGO & ESTOQUE)
 // ==============================================================================
 
+// Reservas temporárias pertencem ao segredo da sacola, nunca ao IP ou a um ID público.
+apiRouter.get('/cart/reservation', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = req.header('X-Cart-Token');
+  if (!validReservationToken(token)) {
+    res.status(400).json({ error: 'Identificação da sacola inválida.' }); return;
+  }
+  try {
+    const result = await getCartReservation(token);
+    res.status(result.success ? 200 : result.statusCode || 400).json(result);
+  } catch {
+    res.status(503).json({ error: 'Não foi possível consultar a reserva. Tente novamente.' });
+  }
+});
+
+apiRouter.post('/cart/reservation', requireSameOrigin, async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const token = req.header('X-Cart-Token');
+  const items = req.body?.items;
+  const version = req.body?.version;
+  const renewIds = req.body?.renew_ids ?? [];
+  if (!validReservationToken(token) || !Array.isArray(items) || (items.length > 0 && !validOrderItems(items))
+    || !Number.isInteger(version) || version < 0 || version > 999999999
+    || !Array.isArray(renewIds) || renewIds.length > 100 || new Set(renewIds).size !== renewIds.length
+    || renewIds.some(id => typeof id !== 'number' || positiveId(id) === null || !items.some(item => item.cake_id === id))) {
+    res.status(400).json({ error: 'Dados da reserva inválidos.' }); return;
+  }
+  const rateKey = createHmac('sha256', sessionSecret()).update('cart-ip|' + req.ip).digest('hex');
+  try {
+    const result = await setCartReservation(token, items, version, rateKey, renewIds);
+    res.status(result.success ? 200 : result.statusCode || 400).json(result);
+  } catch {
+    res.status(503).json({ error: 'Não foi possível atualizar a reserva. Confira a sacola antes de tentar novamente.' });
+  }
+});
+
 // Listagem pública para clientes (apenas ativos) ou completa para admin
 apiRouter.get('/cakes', async (req: Request, res: Response) => {
   try {
+    res.setHeader('Cache-Control', 'no-store');
     const onlyActive = req.query.all !== 'true' || !isAdminRequest(req);
     const cakes = await getAllCakes(onlyActive);
     res.json({ cakes, isPostgres: isPostgresActive() });
@@ -248,11 +287,12 @@ apiRouter.get('/cakes/:id', async (req: Request, res: Response) => {
       res.status(400).json({ error: 'ID inválido.' });
       return;
     }
-    const cake = await getCakeById(id);
+    const cake = await getCakeById(id, !isAdminRequest(req));
     if (!cake || (!cake.is_active && !isAdminRequest(req))) {
       res.status(404).json({ error: 'Bolo não encontrado.' });
       return;
     }
+    res.setHeader('Cache-Control', 'no-store');
     res.json({ cake });
   } catch (err) {
     res.status(500).json({ error: 'Erro ao buscar bolo.' });
@@ -303,6 +343,7 @@ apiRouter.post('/cakes', requireAdmin, async (req: Request, res: Response) => {
   } catch (err) {
     console.error('Erro ao cadastrar bolo:', err);
     const isImageError = err instanceof Error && /imagem|arquivo/i.test(err.message);
+    if (err instanceof Error && 'statusCode' in err && err.statusCode === 409) { res.status(409).json({ error: 'Há unidades reservadas. Aguarde a expiração antes de reduzir o estoque.' }); return; }
     res.status(isImageError ? 400 : 500).json({
       error: isImageError ? err.message : 'Falha ao cadastrar bolo.'
     });
@@ -360,6 +401,7 @@ apiRouter.put('/cakes/:id', requireAdmin, async (req: Request, res: Response) =>
     res.json({ cake: updated, message: 'Bolo atualizado com sucesso!' });
   } catch (err) {
     const isImageError = err instanceof Error && /imagem|arquivo/i.test(err.message);
+    if (err instanceof Error && 'statusCode' in err && err.statusCode === 409) { res.status(409).json({ error: 'Há unidades reservadas. Aguarde a expiração antes de reduzir o estoque.' }); return; }
     res.status(isImageError ? 400 : 500).json({
       error: isImageError ? err.message : 'Falha ao atualizar bolo.'
     });
@@ -392,6 +434,7 @@ apiRouter.patch('/cakes/:id/stock', requireAdmin, async (req: Request, res: Resp
 
     res.json({ cake: updated, message: `Estoque de "${updated.name}" atualizado para ${updated.stock_quantity} unidades.` });
   } catch (err) {
+    if (err instanceof Error && 'statusCode' in err && err.statusCode === 409) { res.status(409).json({ error: 'Há unidades reservadas. Aguarde a expiração antes de reduzir o estoque.' }); return; }
     res.status(500).json({ error: 'Falha ao ajustar estoque.' });
   }
 });
@@ -461,6 +504,11 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
     if (!validIdempotencyKey(idempotencyKey)) {
       res.status(400).json({ error: 'Chave de confirmação inválida. Atualize a página e tente novamente.' }); return;
     }
+    const reservationToken = req.header('X-Cart-Token');
+    const reservationVersion = req.body?.reservation_version;
+    if (!validReservationToken(reservationToken) || !Number.isInteger(reservationVersion) || reservationVersion < 0 || reservationVersion > 999999999) {
+      res.status(400).json({ error: 'Confira a reserva dos itens na sacola antes de confirmar.' }); return;
+    }
     const rateKey = createHmac('sha256', sessionSecret()).update('order-ip|' + req.ip).digest('hex');
 
     // Criar o pedido (valida estoque internamente e deduz)
@@ -473,7 +521,9 @@ apiRouter.post('/orders', async (req: Request, res: Response) => {
       payment_method,
       items,
       idempotency_key: idempotencyKey,
-      rate_key: rateKey
+      rate_key: rateKey,
+      reservation_token: reservationToken,
+      reservation_version: reservationVersion
     });
 
     if (!result.success || !result.order) {

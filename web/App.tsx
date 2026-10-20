@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Cake, CartItem, Order } from './types';
+import { Cake, Order } from './types';
+import { useReservations } from './reservations';
 import { Navbar } from './components/Navbar';
 import { CakeCatalog } from './components/CakeCatalog';
 import { OrderModal } from './components/OrderModal';
@@ -27,7 +28,7 @@ export const App: React.FC = () => {
     sessionStorage.getItem('delicias-current-view') === 'admin' ? 'admin' : 'catalog'
   ));
   const [cakes, setCakes] = useState<Cake[]>([]);
-  const [cart, setCart] = useState<CartItem[]>([]);
+
   const [isCartModalOpen, setIsCartModalOpen] = useState(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
   const [isLoadingCakes, setIsLoadingCakes] = useState(true);
@@ -58,6 +59,9 @@ export const App: React.FC = () => {
     }
   };
 
+  const reservations = useReservations(message => showToast(message, 'error'), () => { void fetchCakes(false); });
+  const cart = reservations.cart;
+
   const checkAdminSession = async () => {
     try {
       const res = await fetch('/api/auth/session', { cache: 'no-store' });
@@ -80,11 +84,11 @@ export const App: React.FC = () => {
   }, [currentView]);
 
   useEffect(() => {
-    const refreshInterval = window.setInterval(() => {
-      void fetchCakes(currentView === 'admin' && isAdminAuthenticated);
-    }, 60_000);
-
-    return () => window.clearInterval(refreshInterval);
+    const refresh = () => { if (document.visibilityState === 'visible') void fetchCakes(currentView === 'admin' && isAdminAuthenticated); };
+    const refreshInterval = window.setInterval(refresh, currentView === 'catalog' ? 3000 : 60_000);
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { window.clearInterval(refreshInterval); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh); };
   }, [currentView, isAdminAuthenticated]);
 
   const handleViewChange = (view: 'catalog' | 'admin') => {
@@ -119,54 +123,18 @@ export const App: React.FC = () => {
     fetchCakes(false);
   };
 
-  // Adicionar ao carrinho com checagem de estoque
-  const handleAddToCart = (cake: Cake, quantity: number) => {
-    if (cake.stock_quantity <= 0) {
-      showToast(`O bolo "${cake.name}" está esgotado no momento.`, 'error');
-      return;
-    }
-
-    setCart(prev => {
-      const existing = prev.find(item => item.cake.id === cake.id);
-      if (existing) {
-        const newQty = Math.min(cake.stock_quantity, existing.quantity + quantity);
-        showToast(`${newQty}x "${cake.name}" adicionado ao carrinho.`, 'success');
-        return prev.map(item =>
-          item.cake.id === cake.id ? { ...item, quantity: newQty } : item
-        );
-      }
-      const initialQty = Math.min(cake.stock_quantity, quantity);
-      showToast(`${initialQty}x "${cake.name}" adicionado ao carrinho.`, 'success');
-      return [...prev, { cake, quantity: initialQty }];
-    });
+  const handleAddToCart = async (cake: Cake, quantity: number) => {
+    if (await reservations.add(cake, quantity)) showToast(`Item "${cake.name}" adicionado à sua reserva.`, 'success');
   };
-
-  const handleRemoveFromCart = (cakeId: number) => {
-    setCart(prev => prev.filter(item => item.cake.id !== cakeId));
-    showToast('Item removido da sacola.', 'success');
-  };
-
-  const handleUpdateCartQuantity = (cakeId: number, qty: number) => {
-    setCart(prev =>
-      prev
-        .map(item => {
-          if (item.cake.id === cakeId) {
-            const safeQty = Math.max(1, Math.min(item.cake.stock_quantity, qty));
-            return { ...item, quantity: safeQty };
-          }
-          return item;
-        })
-        .filter(item => item.quantity > 0)
-    );
-  };
-
+  const handleRemoveFromCart = (cakeId: number) => { void reservations.remove(cakeId); };
+  const handleUpdateCartQuantity = (cakeId: number, qty: number) => { void reservations.update(cakeId, qty); };
   const handleOrderSuccess = (order: Order) => {
-    setCart([]);
+    reservations.clear();
     fetchCakes(false);
     showToast(`Reserva #${order.order_code} confirmada!`, 'success');
   };
 
-  const totalCartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const totalCartCount = cart.filter(item => item.status !== 'expired').reduce((sum, item) => sum + item.quantity, 0);
 
   return (
     <div className="min-h-screen bg-rose-50/80 text-slate-900 flex flex-col selection:bg-pink-200 selection:text-slate-900">
@@ -254,6 +222,8 @@ export const App: React.FC = () => {
                       cakes={cakes}
                       cart={cart}
                       onAddToCart={handleAddToCart}
+                      reservationBusy={reservations.busy}
+                      pendingReservationId={reservations.pendingId}
                       onOpenCheckout={() => setIsCartModalOpen(true)}
                     />
                   </div>
@@ -325,6 +295,12 @@ export const App: React.FC = () => {
         onRemoveItem={handleRemoveFromCart}
         onUpdateQuantity={handleUpdateCartQuantity}
         onOrderSuccess={handleOrderSuccess}
+        reservationBusy={reservations.busy}
+        reservationNow={reservations.now}
+        reservationVersion={reservations.version}
+        cartToken={reservations.token}
+        onRenewItem={item => { void reservations.add(item.cake, item.quantity, true); }}
+        onRefreshReservation={reservations.refresh}
       />
 
       {/* Rodapé Elegante */}

@@ -1,8 +1,11 @@
 import { randomBytes, createHash, scryptSync, timingSafeEqual } from 'crypto';
-import { Pool, PoolClient } from 'pg';
+import { Pool } from 'pg';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import type { ReservationResult as SharedReservationResult } from '../shared/reservations.js';
 import { AppStats, Cake, Order, OrderItem } from './_types.js';
 import { getSupabaseConfig, supabaseRpc, type SupabaseConfig } from './_supabase.js';
-import { validOrderItems, validIdempotencyKey, MAX_PRICE } from './_validation.js';
+import { validOrderItems, validIdempotencyKey } from './_validation.js';
 
 let pgPool: Pool | null = null;
 let usePostgres = false;
@@ -86,8 +89,8 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     const config = getSupabaseConfig();
     if (config) {
       const health = await supabaseRpc<{ ok: boolean; version?: number }>(config, 'health');
-      if (!health?.ok || health.version !== 13) {
-        throw new Error('Supabase HTTPS: execute a migration 013_pedidos_seguros.sql antes de usar este backend.');
+      if (!health?.ok || health.version !== 14) {
+        throw new Error('Supabase HTTPS: execute a migration 014_reservas_temporarias.sql antes de usar este backend.');
       }
       if (process.env.ADMIN_INITIAL_PASSWORD) {
         await supabaseRpc(config, 'ensure_admin', {
@@ -137,6 +140,15 @@ export async function initDatabase(): Promise<{ isPostgres: boolean; message: st
     await pgPool.query('SELECT 1');
     usePostgres = true;
     await runSchema(pgPool, schema);
+    // The local database uses the same transactional functions as HTTPS, in its own schema.
+    for (const name of ['012_supabase_https.sql', '013_pedidos_seguros.sql', '014_reservas_temporarias.sql']) {
+      const sql = (await readFile(resolve(process.cwd(), 'migrations', name), 'utf8'))
+        .replaceAll('ALTER FUNCTION public.vendas_backend(text, jsonb) SET SCHEMA vendas_de_bolo;', '')
+        .replaceAll('vendas_de_bolo.vendas_backend(text, jsonb) RENAME', 'vendas_de_bolo.local_backend(text, jsonb) RENAME')
+        .replaceAll('public.vendas_backend', `${schema}.local_backend`)
+        .replaceAll('vendas_de_bolo', schema);
+      await pgPool.query(sql);
+    }
     await ensureInitialAdmin(pgPool);
     return { isPostgres: true, message: `PostgreSQL conectado no schema ${schema}.` };
   } catch (error) {
@@ -306,17 +318,48 @@ export async function clearLoginFailures(key: string): Promise<void> {
   await requirePool().query('DELETE FROM tentativas_login WHERE chave = $1', [key]);
 }
 
-export async function getAllCakes(onlyActive = false): Promise<Cake[]> {
-  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cakes', { onlyActive }); }
-  const where = onlyActive ? 'WHERE ativo = TRUE' : '';
-  const result = await requirePool().query(`SELECT ${cakeColumns} FROM bolos ${where} ORDER BY id`);
-  return result.rows.map(mapCake);
+async function reservationRpc<T>(operation: string, data: Record<string, unknown> = {}): Promise<T> {
+  let payload: T;
+  if (supabaseConfig) payload = await supabaseRpc<T>(supabaseConfig, operation, data);
+  else {
+    const schema = process.env.PGSCHEMA || 'vendas_de_bolo';
+    const result = await requirePool().query(`SELECT "${schema}".local_backend($1, $2::jsonb) AS result`, [operation, JSON.stringify(data)]);
+    payload = result.rows[0].result as T;
+  }
+  const conflict = payload as { reservation_conflict?: boolean; error?: string } | null;
+  if (conflict?.reservation_conflict) {
+    throw Object.assign(new Error(conflict.error || 'Há unidades reservadas deste produto.'), { statusCode: 409 });
+  }
+  return payload;
 }
 
-export async function getCakeById(id: number): Promise<Cake | null> {
-  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cake', { id }); }
-  const result = await requirePool().query(`SELECT ${cakeColumns} FROM bolos WHERE id = $1`, [id]);
-  return result.rows[0] ? mapCake(result.rows[0]) : null;
+export type ReservationResult = SharedReservationResult<Cake>;
+
+function reservationHash(token: string): string {
+  if (!/^[A-Za-z0-9_-]{32,128}$/.test(token)) throw new Error('Token da sacola inválido.');
+  return createHash('sha256').update(token).digest('hex');
+}
+
+export async function getCartReservation(token: string): Promise<ReservationResult> {
+  return reservationRpc('cart_get', { token_hash: reservationHash(token) });
+}
+
+export async function setCartReservation(token: string, items: { cake_id: number; quantity: number }[], expectedVersion: number,
+  rateKey: string, renewCakeIds: number[] = []): Promise<ReservationResult> {
+  if (!Array.isArray(items) || items.length > 100 || (items.length > 0 && !validOrderItems(items)) ||
+    new Set(items.map(item => item.cake_id)).size !== items.length || !Number.isInteger(expectedVersion) || expectedVersion < 0 || expectedVersion > 999999999 ||
+    !/^[a-f0-9]{64}$/.test(rateKey) || !Array.isArray(renewCakeIds) || renewCakeIds.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+    return { ...(await getCartReservation(token)), success: false, statusCode: 400, error: 'Sacola inválida.' };
+  }
+  return reservationRpc('cart_set', { token_hash: reservationHash(token), items, expected_version: expectedVersion, rate_key: rateKey, renew_ids: renewCakeIds });
+}
+
+export async function getAllCakes(onlyActive = false): Promise<Cake[]> {
+  return reservationRpc('cakes', { onlyActive });
+}
+
+export async function getCakeById(id: number, onlyActive = false): Promise<Cake | null> {
+  return reservationRpc('cake', { id, onlyActive });
 }
 
 interface CakeImageInput {
@@ -353,30 +396,7 @@ export async function createCake(
 }
 
 export async function updateCake(id: number, data: Partial<Cake>, image?: CakeImageInput | null): Promise<Cake | null> {
-  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'cake_update', { ...data, id, image: encodeImage(image) }); }
-  const existing = await getCakeById(id);
-  if (!existing) return null;
-  const merged = { ...existing, ...data };
-  const result = await requirePool().query(
-    `UPDATE bolos SET nome = $1, ingredientes = $2, categoria = $3, preco = $4,
-       quantidade_disponivel = $5, imagem_url = $6, ativo = $7,
-       imagem_dados = COALESCE($8, imagem_dados), imagem_tipo = COALESCE($9, imagem_tipo),
-       atualizado_em = CURRENT_TIMESTAMP
-     WHERE id = $10 RETURNING ${cakeColumns}`,
-    [
-      merged.name,
-      merged.ingredients,
-      merged.category,
-      merged.price,
-      merged.stock_quantity,
-      merged.image_url,
-      merged.is_active,
-      image?.buffer || null,
-      image?.mimeType || null,
-      id
-    ]
-  );
-  return result.rows[0] ? mapCake(result.rows[0]) : null;
+  return reservationRpc('cake_update', { ...data, id, image: encodeImage(image) });
 }
 
 export async function getCakeImage(id: number): Promise<{ data: Buffer; mimeType: string } | null> {
@@ -396,36 +416,7 @@ export async function getCakeImage(id: number): Promise<{ data: Buffer; mimeType
 }
 
 export async function updateStock(id: number, newStock: number, reason: string, notes?: string): Promise<Cake | null> {
-  if (supabaseConfig) { return supabaseRpc(supabaseConfig, 'stock', { id, newStock, reason, notes }); }
-  const pool = requirePool();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const current = await client.query('SELECT nome, quantidade_disponivel FROM bolos WHERE id = $1 FOR UPDATE', [id]);
-    if (!current.rows[0]) {
-      await client.query('ROLLBACK');
-      return null;
-    }
-    const previous = Number(current.rows[0].quantidade_disponivel);
-    const safeStock = Math.max(0, Math.floor(newStock));
-    const updated = await client.query(
-      `UPDATE bolos SET quantidade_disponivel = $1, atualizado_em = CURRENT_TIMESTAMP
-       WHERE id = $2 RETURNING ${cakeColumns}`,
-      [safeStock, id]
-    );
-    await client.query(
-      `INSERT INTO logs (bolo_id, tipo, descricao, quantidade_anterior, quantidade_nova)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, reason, notes || `Estoque de ${current.rows[0].nome} atualizado`, previous, safeStock]
-    );
-    await client.query('COMMIT');
-    return mapCake(updated.rows[0]);
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  return reservationRpc('stock', { id, newStock, reason, notes });
 }
 
 export async function deleteCake(id: number): Promise<boolean> {
@@ -447,8 +438,11 @@ export async function createOrder(data: {
   items: { cake_id: number; quantity: number }[];
   idempotency_key: string;
   rate_key: string;
-}): Promise<{ order: Order; success: boolean; error?: string; statusCode?: number; replayed?: boolean }> {
-  if (!validOrderItems(data.items) || !validIdempotencyKey(data.idempotency_key) || !/^[a-f0-9]{64}$/.test(data.rate_key)) {
+  reservation_token: string;
+  reservation_version: number;
+}): Promise<{ order: Order; success: boolean; error?: string; statusCode?: number; replayed?: boolean; cart?: ReservationResult['cart'] }> {
+  if (!validOrderItems(data.items) || !validIdempotencyKey(data.idempotency_key) || !/^[a-f0-9]{64}$/.test(data.rate_key) ||
+    !/^[A-Za-z0-9_-]{32,128}$/.test(data.reservation_token || '') || !Number.isInteger(data.reservation_version) || data.reservation_version < 0 || data.reservation_version > 999999999) {
     return { order: null as unknown as Order, success: false, error: 'Pedido inválido.', statusCode: 400 };
   }
   const aggregated = new Map<number, number>();
@@ -457,122 +451,11 @@ export async function createOrder(data: {
     customer_name: data.customer_name, customer_phone: data.customer_phone,
     delivery_block: data.delivery_block, delivery_apartment: data.delivery_apartment,
     notes: data.notes || '', payment_method: data.payment_method,
-    items: [...aggregated].sort((a,b) => a[0] - b[0])
+    items: [...aggregated].sort((a,b) => a[0] - b[0]),
+    reservation_hash: reservationHash(data.reservation_token)
   })).digest('hex');
-  if (supabaseConfig) return supabaseRpc(supabaseConfig, 'order_create', { ...data, request_hash: fingerprint });
-  const quantities = new Map<number, number>();
-  for (const item of data.items) {
-    if (!Number.isInteger(item.cake_id) || !Number.isInteger(item.quantity) || item.quantity <= 0) {
-      return { order: null as unknown as Order, success: false, error: 'Item ou quantidade inválida.' };
-    }
-    quantities.set(item.cake_id, (quantities.get(item.cake_id) || 0) + item.quantity);
-  }
-
-  const pool = requirePool();
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [data.idempotency_key]);
-    const existing = await client.query(
-      `SELECT ${orderColumns}, idempotencia_hash FROM pedidos WHERE idempotencia_chave = $1`, [data.idempotency_key]
-    );
-    if (existing.rows[0]) {
-      if (existing.rows[0].idempotencia_hash !== fingerprint) {
-        await client.query('ROLLBACK');
-        return { order: null as unknown as Order, success: false, statusCode: 409, error: 'Esta chave já foi usada para outro pedido.' };
-      }
-      const items = await client.query(
-        `SELECT id, pedido_id AS order_id, bolo_id AS cake_id, nome_bolo AS cake_name,
-          quantidade AS quantity, preco_unitario AS unit_price, subtotal FROM itens_pedido WHERE pedido_id = $1 ORDER BY id`,
-        [existing.rows[0].id]
-      );
-      const { idempotencia_hash: _privateHash, ...row } = existing.rows[0];
-      await client.query('COMMIT');
-      return { order: mapOrder(row, items.rows.map(item => ({ ...item, unit_price: Number(item.unit_price), subtotal: Number(item.subtotal) }))), success: true, replayed: true };
-    }
-    const rate = await client.query(
-      `INSERT INTO tentativas_login AS t(chave, tentativas) VALUES ($1, 1)
-       ON CONFLICT (chave) DO UPDATE SET
-         tentativas = CASE WHEN t.atualizado_em < CURRENT_TIMESTAMP - INTERVAL '15 minutes' THEN 1 ELSE LEAST(t.tentativas + 1, 21) END,
-         atualizado_em = CASE WHEN t.atualizado_em < CURRENT_TIMESTAMP - INTERVAL '15 minutes' THEN CURRENT_TIMESTAMP ELSE t.atualizado_em END
-       RETURNING tentativas`, [data.rate_key]
-    );
-    if (rate.rows[0].tentativas > 20) {
-      await client.query('COMMIT');
-      return { order: null as unknown as Order, success: false, statusCode: 429, error: 'Limite de pedidos atingido. Aguarde 15 minutos.' };
-    }
-    const ids = [...quantities.keys()].sort((a, b) => a - b);
-    const locked = await client.query(
-      `SELECT ${cakeColumns} FROM bolos WHERE id = ANY($1::int[]) ORDER BY id FOR UPDATE`,
-      [ids]
-    );
-    const cakes = new Map<number, Cake>(locked.rows.map(row => {
-      const cake = mapCake(row);
-      return [cake.id, cake];
-    }));
-
-    const processedItems: OrderItem[] = [];
-    let totalAmount = 0;
-    for (const id of ids) {
-      const cake = cakes.get(id);
-      const quantity = quantities.get(id) || 0;
-      if (!cake || !cake.is_active) {
-        await client.query('COMMIT');
-        return { order: null as unknown as Order, success: false, error: `Bolo ID ${id} indisponível.` };
-      }
-      if (cake.stock_quantity < quantity) {
-        await client.query('COMMIT');
-        return {
-          order: null as unknown as Order,
-          success: false,
-          error: `Estoque insuficiente para "${cake.name}". Disponíveis: ${cake.stock_quantity}.`
-        };
-      }
-      const subtotal = Number((cake.price * quantity).toFixed(2));
-      totalAmount = Number((totalAmount + subtotal).toFixed(2));
-      if (subtotal > MAX_PRICE || totalAmount > MAX_PRICE) {
-        await client.query('COMMIT');
-        return { order: null as unknown as Order, success: false, statusCode: 400, error: 'O valor do pedido ultrapassa o limite permitido.' };
-      }
-      processedItems.push({ cake_id: id, cake_name: cake.name, quantity, unit_price: cake.price, subtotal });
-    }
-
-    const orderCode = `DJU-${Date.now().toString(36).toUpperCase()}-${randomBytes(2).toString('hex').toUpperCase()}`;
-    const insertedOrder = await client.query(
-      `INSERT INTO pedidos
-       (codigo, nome_cliente, whatsapp_cliente, bloco, apartamento, observacoes, valor_total, forma_pagamento, status, idempotencia_chave, idempotencia_hash)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pendente', $9, $10) RETURNING ${orderColumns}`,
-      [orderCode, data.customer_name, data.customer_phone, data.delivery_block, data.delivery_apartment, data.notes || '', totalAmount, data.payment_method, data.idempotency_key, fingerprint]
-    );
-    const orderId = Number(insertedOrder.rows[0].id);
-
-    for (const item of processedItems) {
-      const previous = cakes.get(item.cake_id)!.stock_quantity;
-      const next = previous - item.quantity;
-      await client.query(
-        'UPDATE bolos SET quantidade_disponivel = $1, atualizado_em = CURRENT_TIMESTAMP WHERE id = $2',
-        [next, item.cake_id]
-      );
-      await client.query(
-        `INSERT INTO itens_pedido (pedido_id, bolo_id, nome_bolo, quantidade, preco_unitario, subtotal)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [orderId, item.cake_id, item.cake_name, item.quantity, item.unit_price, item.subtotal]
-      );
-      await client.query(
-        `INSERT INTO logs (pedido_id, bolo_id, tipo, descricao, quantidade_anterior, quantidade_nova)
-         VALUES ($1, $2, 'venda', $3, $4, $5)`,
-        [orderId, item.cake_id, `Reserva ${orderCode}: ${item.quantity}x ${item.cake_name}`, previous, next]
-      );
-    }
-
-    await client.query('COMMIT');
-    return { order: mapOrder(insertedOrder.rows[0], processedItems), success: true };
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
+  const { reservation_token, reservation_version, ...payload } = data;
+  return reservationRpc('order_create', { ...payload, token_hash: reservationHash(reservation_token), expected_version: reservation_version, request_hash: fingerprint });
 }
 
 export async function updateTelegramDelivery(orderId: number, sent: boolean, errorMessage = ''): Promise<void> {
