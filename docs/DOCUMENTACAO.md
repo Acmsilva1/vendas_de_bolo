@@ -587,3 +587,9 @@ Validação em fixture local:1920px com quatro colunas (~350px por card);1280px 
 - Validação: TypeScript, build Vercel e cinco testes isolados de reservas/chave de pedido aprovados. Build exigiu execução fora do sandbox por spawn EPERM do esbuild. Esses testes não verificam foco no navegador.
 - Conferência visual não concluída: navegador de prévia apresentou timeout ao abrir fixture local. Sem acesso a banco, serviços reais ou produção.
 - Checkpoint: base 60d32ee; correção local em web/components/OrderModal.tsx, sem commit, push ou deploy.
+
+### Folha centralizada no painel admin — 2026-10-21
+- AdminDashboard compartilha a mesma regra CSS do contêiner do catálogo em telas a partir de 1024px: largura calc(100% - 10cm), sem largura máxima, altura mínima 297mm, margem vertical 1.5rem, centralização horizontal e padding 10mm. Fundo branco, borda, raio e sombra idênticos.
+- Layout mobile/tablet, cabeçalho global, conteúdo e funcionalidades administrativas preservados. Regra compartilhada mantém os parâmetros de ambas as telas sincronizados.
+- Validação: TypeScript, build Vercel e git diff --check aprovados. Sem novos testes por se tratar apenas de CSS; conferência visual no navegador não executada nesta etapa.
+- Checkpoint: base 69d6bb2; alteração local em src/index.css, sem commit, push ou deploy.

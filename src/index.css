@@ -305,7 +305,8 @@ select,
 }
 
 @media (min-width: 1024px) {
-  .catalog-shell {
+  .catalog-shell,
+  .admin-dashboard {
     box-sizing: border-box;
     width: calc(100% - 10cm);
     max-width: none;
