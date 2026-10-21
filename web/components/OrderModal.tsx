@@ -94,18 +94,21 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     onClose();
   }, [onClose]);
 
+  const closeHandlerRef = useRef(handleResetAndClose);
+  closeHandlerRef.current = handleResetAndClose;
+
   useEffect(() => {
     if (!isOpen) return;
 
     const previousOverflow = document.body.style.overflow;
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     document.body.style.overflow = 'hidden';
-    window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        handleResetAndClose();
+        closeHandlerRef.current();
         return;
       }
 
@@ -132,11 +135,12 @@ export const OrderModal: React.FC<OrderModalProps> = ({
     document.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       document.body.style.overflow = previousOverflow;
       document.removeEventListener('keydown', handleKeyDown);
       previouslyFocused?.focus();
     };
-  }, [handleResetAndClose, isOpen]);
+  }, [isOpen]);
 
   useEffect(() => {
     if (!cart.some(item => item.status !== 'expired')) setMobileStep(1);

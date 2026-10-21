@@ -580,3 +580,10 @@ Validação em fixture local:1920px com quatro colunas (~350px por card);1280px 
 - Testes direcionados:3 aprovados, incluindo limites6/10, rejeição5/11, ausência de símbolo, acentos/espaços e fluxo de troca/revogação. Sem acesso a banco real nesta etapa.
 - Checkpoint: sem nova migration; precisa deploy para refletir alteração publicada. Nenhuma senha real alterada, sem commit/push/deploy.
 - TypeScript, build Vercel e diff check também aprovados.
+
+### Correção de foco no formulário de pedido — 2026-10-21
+- Causa identificada no código: App fornece onClose inline; cada atualização do cronômetro de reservas recriava handleResetAndClose, reiniciando o efeito de foco/rolagem do OrderModal. Isso devolvia o foco ao botão Fechar durante a interação com campos e seletores.
+- Efeito limitado à abertura/fechamento do modal; Escape consulta o callback atual por ref. Cancelado requestAnimationFrame pendente na limpeza. Preservados bloqueio de rolagem, navegação por Tab e restauração de foco ao fechar.
+- Validação: TypeScript, build Vercel e cinco testes isolados de reservas/chave de pedido aprovados. Build exigiu execução fora do sandbox por spawn EPERM do esbuild. Esses testes não verificam foco no navegador.
+- Conferência visual não concluída: navegador de prévia apresentou timeout ao abrir fixture local. Sem acesso a banco, serviços reais ou produção.
+- Checkpoint: base 60d32ee; correção local em web/components/OrderModal.tsx, sem commit, push ou deploy.
